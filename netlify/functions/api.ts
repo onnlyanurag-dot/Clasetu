@@ -1,0 +1,13 @@
+import serverless from "serverless-http";
+import { createExpressApp } from "../../server";
+
+let app: any;
+
+export const handler = async (event: any, context: any) => {
+  // Lazy initialize the express app
+  if (!app) {
+    app = await createExpressApp();
+  }
+  const handlerFn = serverless(app);
+  return handlerFn(event, context);
+};
