@@ -311,10 +311,10 @@ export default function BatchAttendanceView({
                         <span className="block text-[9px] uppercase tracking-wider font-extrabold text-slate-400 mb-1">In-Charge Teachers</span>
                         {b.assignedTeacherIds && b.assignedTeacherIds.length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {b.assignedTeacherIds.map((tid) => {
+                            {b.assignedTeacherIds.map((tid, index) => {
                               const teacher = teachers.find((t) => t.id === tid);
                               return (
-                                <span key={tid} className="bg-slate-100 text-slate-700 border border-slate-200/60 rounded px-1.5 py-0.5 text-[9px] font-bold">
+                                <span key={`${b.id}-${tid}-${index}`} className="bg-slate-100 text-slate-700 border border-slate-200/60 rounded px-1.5 py-0.5 text-[9px] font-bold">
                                   👤 {teacher ? teacher.name : "Professor Sub-Account"}
                                 </span>
                               );

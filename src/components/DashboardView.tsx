@@ -20,7 +20,7 @@ import {
   CartesianGrid, 
   Tooltip
 } from "recharts";
-import { Student, Batch, FeeInstallment, AttendanceRecord } from "../types";
+import { Student, Batch, FeeInstallment, AttendanceRecord, TransferRequest } from "../types";
 
 interface DashboardViewProps {
   students: Student[];
@@ -38,6 +38,9 @@ interface DashboardViewProps {
     smsSent?: number;
     smsLeft?: number;
   } | null;
+  transferRequests?: TransferRequest[];
+  onApproveRequest?: (request: TransferRequest) => void;
+  onRejectRequest?: (request: TransferRequest) => void;
 }
 
 export default function DashboardView({ 
@@ -46,7 +49,10 @@ export default function DashboardView({
   installments = [],
   attendance = [],
   onNavigate,
-  instituteData
+  instituteData,
+  transferRequests = [],
+  onApproveRequest,
+  onRejectRequest
 }: DashboardViewProps) {
   
   const activeStudents = students.filter(s => s.status === "active").length;
@@ -355,6 +361,72 @@ export default function DashboardView({
           </div>
         );
       })()}
+
+      {/* --- STUDENT TRANSFER REQUESTS CENTER --- */}
+      <div className="bg-white rounded-2xl p-6 border border-slate-150 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+          <div>
+            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-sm">📥</span>
+              Student Transfer Requests (स्थानांतरण अनुरोध)
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              These students are currently registered under your institute. Another institute has requested to transfer them to their rosters.
+            </p>
+          </div>
+          {transferRequests.filter(r => r.request_status === "PENDING").length > 0 ? (
+            <span className="bg-amber-100 text-amber-800 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full animate-pulse">
+              {transferRequests.filter(r => r.request_status === "PENDING").length} Pending
+            </span>
+          ) : (
+            <span className="bg-slate-100 text-slate-500 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full">
+              0 Active
+            </span>
+          )}
+        </div>
+
+        {transferRequests.filter(r => r.request_status === "PENDING").length > 0 ? (
+          <div className="divide-y divide-slate-150">
+            {transferRequests
+              .filter(r => r.request_status === "PENDING")
+              .map((req) => (
+                <div key={req.id} className="py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-fade-in">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-800 text-sm">{req.student_name}</span>
+                      <span className="bg-slate-100 text-slate-650 text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-200">
+                        ID: {req.student_code}
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                      <span className="text-slate-400">📞 Contact Phone:</span>
+                      <span className="font-mono font-bold text-slate-700">{req.student_phone || "Not provided"}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      onClick={() => onRejectRequest?.(req)}
+                      className="flex-1 sm:flex-none px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      Reject (अस्वीकार करें)
+                    </button>
+                    <button
+                      onClick={() => onApproveRequest?.(req)}
+                      className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shadow-sm flex items-center justify-center gap-1"
+                    >
+                      Approve (स्वीकार करें)
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        ) : (
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-6 text-center text-xs text-slate-500">
+            🍃 कोई लंबित स्थानांतरण अनुरोध नहीं है। (No pending student transfer requests.)
+          </div>
+        )}
+      </div>
 
       {/* Summary Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">

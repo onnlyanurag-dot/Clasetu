@@ -20,6 +20,7 @@ import {
   ArrowDownToLine,
   RefreshCw,
   ChevronDown,
+  Send,
   Check
 } from "lucide-react";
 import { Student, Batch, FeeInstallment, AttendanceRecord } from "../types";
@@ -158,6 +159,7 @@ export default function StudentManagerView({
   const [transferSuccessPin, setTransferSuccessPin] = useState<string | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferSubmitSuccess, setTransferSubmitSuccess] = useState("");
+  const [consentChecked, setConsentChecked] = useState(false);
 
   React.useEffect(() => {
     if (autoOpenAdd) {
@@ -225,42 +227,10 @@ export default function StudentManagerView({
     setIsAddOpen(true);
   };
 
-  const handleReleaseStudent = async (student: Student) => {
-    if (isSubscribed === false) {
-      onSubscriptionBlocked?.();
-      return;
-    }
-    setTransferLoading(true);
-    setTransferSuccessPin(null);
-    try {
-      const pin = Math.floor(1000 + Math.random() * 9000).toString();
-      
-      // Save in Firestore transfer_logs
-      await addDoc(collection(db, "transfer_logs"), {
-        student_unique_code: student.id,
-        from_institute_id: auth.currentUser?.uid || "",
-        to_institute_id: null,
-        transfer_pin: pin,
-        log_status: "PENDING",
-        created_at: serverTimestamp()
-      });
-
-      // Update student status in Firestore and React state
-      await onUpdateStudent(student.id, { status: "READY_TO_TRANSFER" });
-
-      setTransferSuccessPin(pin);
-    } catch (err: any) {
-      console.error("Transfer release failed:", err);
-      alert("Failed to release student for transfer. Please try again.");
-    } finally {
-      setTransferLoading(false);
-    }
-  };
-
   const handleFetchTransferPreview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!transferCode || !transferPin) {
-      setTransferPreviewError("Please enter both Student Code and 4-digit Transfer PIN.");
+    if (!transferCode) {
+      setTransferPreviewError("Please enter the Student Unique Code.");
       return;
     }
     setTransferPreviewLoading(true);
@@ -275,61 +245,61 @@ export default function StudentManagerView({
       if (studentDocSnap.exists()) {
         const firestoreData = studentDocSnap.data();
         
-        // Check if status is READY_TO_TRANSFER
-        if (firestoreData.status !== "READY_TO_TRANSFER") {
-          throw new Error("Student has not been released for transfer by their source institute.");
+        // CASE A: Check if the student is already soft-deleted (deleted_status == 1)
+        if (firestoreData.deleted_status === 1) {
+          studentData = {
+            id: transferCode,
+            name: firestoreData.name || "",
+            parentName: firestoreData.parentName || "",
+            parentMobile: firestoreData.parentMobile || "",
+            alternateMobile: firestoreData.alternateMobile || "",
+            grade: firestoreData.grade || firestoreData.gradeLevel || "Grade 10",
+            gradeLevel: firestoreData.gradeLevel || firestoreData.grade || "Grade 10",
+            schoolName: firestoreData.schoolName || "",
+            schoolTiming: firestoreData.schoolTiming || "",
+            preferredTuitionTiming: firestoreData.preferredTuitionTiming || "",
+            reasonForPreferredTiming: firestoreData.reasonForPreferredTiming || "",
+            subjects: firestoreData.subjects || [],
+            admissionDate: firestoreData.admissionDate || "",
+            feesAmount: Number(firestoreData.feesAmount || firestoreData.totalFees || 16000),
+            feesPlan: firestoreData.feesPlan || "quarterly",
+            status: firestoreData.status || "active",
+            instituteId: firestoreData.instituteId || firestoreData.institute_id || "",
+            deleted_status: 1,
+            isNoPinTransfer: true // helper flag to indicate PIN is bypassed
+          };
+        } else {
+          // CASE B: Standard active student transfer - No PIN required, we will create a transfer request!
+          studentData = {
+            id: transferCode,
+            name: firestoreData.name || "",
+            parentName: firestoreData.parentName || "",
+            parentMobile: firestoreData.parentMobile || "",
+            alternateMobile: firestoreData.alternateMobile || "",
+            grade: firestoreData.grade || firestoreData.gradeLevel || "Grade 10",
+            gradeLevel: firestoreData.gradeLevel || firestoreData.grade || "Grade 10",
+            schoolName: firestoreData.schoolName || "",
+            schoolTiming: firestoreData.schoolTiming || "",
+            preferredTuitionTiming: firestoreData.preferredTuitionTiming || "",
+            reasonForPreferredTiming: firestoreData.reasonForPreferredTiming || "",
+            subjects: firestoreData.subjects || [],
+            admissionDate: firestoreData.admissionDate || "",
+            feesAmount: Number(firestoreData.feesAmount || firestoreData.totalFees || 16000),
+            feesPlan: firestoreData.feesPlan || "quarterly",
+            status: firestoreData.status || "active",
+            instituteId: firestoreData.instituteId || firestoreData.institute_id || "",
+            deleted_status: firestoreData.deleted_status || 0,
+            isRequestTransfer: true // helper flag to indicate it needs a Transfer Request
+          };
         }
-
-        // Verify PIN via transfer_logs
-        const logsQuery = query(
-          collection(db, "transfer_logs"),
-          where("student_unique_code", "==", transferCode),
-          where("transfer_pin", "==", transferPin),
-          where("log_status", "==", "PENDING")
-        );
-        const logsSnap = await getDocs(logsQuery);
-        if (logsSnap.empty) {
-          throw new Error("Incorrect Transfer PIN or PIN has expired/been used.");
-        }
-
-        studentData = {
-          id: transferCode,
-          name: firestoreData.name || "",
-          parentName: firestoreData.parentName || "",
-          parentMobile: firestoreData.parentMobile || "",
-          alternateMobile: firestoreData.alternateMobile || "",
-          grade: firestoreData.grade || firestoreData.gradeLevel || "Grade 10",
-          gradeLevel: firestoreData.gradeLevel || firestoreData.grade || "Grade 10",
-          schoolName: firestoreData.schoolName || "",
-          schoolTiming: firestoreData.schoolTiming || "",
-          preferredTuitionTiming: firestoreData.preferredTuitionTiming || "",
-          reasonForPreferredTiming: firestoreData.reasonForPreferredTiming || "",
-          subjects: firestoreData.subjects || [],
-          admissionDate: firestoreData.admissionDate || "",
-          feesAmount: Number(firestoreData.feesAmount || firestoreData.totalFees || 16000),
-          feesPlan: firestoreData.feesPlan || "quarterly",
-          status: firestoreData.status || "active",
-          instituteId: firestoreData.instituteId || ""
-        };
       } else {
-        // Fallback to Express backend (helpful for mock initial data / test runners)
-        const response = await fetch(`/api/transfers/preview?student_unique_code=${encodeURIComponent(transferCode)}&transfer_pin=${encodeURIComponent(transferPin)}`);
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || "Failed to preview student transfer.");
-        }
-        const data = await response.json();
-        studentData = data.student;
+        throw new Error("No student record found for the provided Unique Student Code.");
       }
 
-      if (!studentData) {
-        throw new Error("No student record found for the provided inputs.");
-      }
-      
       setTransferPreviewStudent(studentData);
     } catch (err: any) {
       console.error("Error fetching transfer preview:", err);
-      setTransferPreviewError(err.message || "An error occurred. Please verify the code and PIN.");
+      setTransferPreviewError(err.message || "An error occurred. Please verify the code.");
     } finally {
       setTransferPreviewLoading(false);
     }
@@ -345,55 +315,71 @@ export default function StudentManagerView({
     setTransferPreviewError("");
     try {
       const newInstId = auth.currentUser.uid;
-      
-      // 1. Update the student's document in Firestore: set instituteId and set status = 'ACTIVE'
-      const studentRef = doc(db, "students", transferPreviewStudent.id);
-      await updateDoc(studentRef, {
-        instituteId: newInstId,
-        status: "ACTIVE"
-      });
 
-      // 2. Mark the PIN status as 'ACCEPTED' in transfer_logs
-      const logsQuery = query(
-        collection(db, "transfer_logs"),
-        where("student_unique_code", "==", transferPreviewStudent.id),
-        where("transfer_pin", "==", transferPin),
-        where("log_status", "==", "PENDING")
-      );
-      const logsSnap = await getDocs(logsQuery);
-      for (const logDoc of logsSnap.docs) {
-        await updateDoc(doc(db, "transfer_logs", logDoc.id), {
-          log_status: "ACCEPTED",
-          to_institute_id: newInstId
+      if (transferPreviewStudent.isNoPinTransfer) {
+        if (!consentChecked) {
+          throw new Error("Please confirm the parent presence and consent by checking the checkbox.");
+        }
+
+        // Direct write authorization execution for Case A
+        const studentRef = doc(db, "students", transferPreviewStudent.id);
+        await updateDoc(studentRef, {
+          instituteId: newInstId,
+          institute_id: newInstId,
+          deleted_status: 0,
+          status: "ACTIVE"
         });
+
+        // Add a document inside the transfer_requests collection
+        await addDoc(collection(db, "transfer_requests"), {
+          student_code: transferPreviewStudent.id,
+          student_name: transferPreviewStudent.name,
+          student_phone: transferPreviewStudent.parentMobile || "",
+          from_institute_id: transferPreviewStudent.instituteId || "",
+          to_institute_id: newInstId,
+          request_status: "APPROVED",
+          created_at: serverTimestamp()
+        });
+
+        // Refresh list of students
+        if (onRefreshStudents) {
+          await onRefreshStudents();
+        }
+
+        setTransferSubmitSuccess(`Transfer confirmed successfully! ${transferPreviewStudent.name} is now registered in your institute database.`);
+        setTransferPreviewStudent(null);
+        setTransferCode("");
+        setConsentChecked(false);
+        
+        // Auto-close after a delay
+        setTimeout(() => {
+          setIsTransferModalOpen(false);
+          setTransferSubmitSuccess("");
+        }, 3000);
+
+      } else if (transferPreviewStudent.isRequestTransfer) {
+        // CASE B: Submit a PENDING Transfer Request instead of immediate transfer!
+        await addDoc(collection(db, "transfer_requests"), {
+          student_code: transferPreviewStudent.id,
+          student_name: transferPreviewStudent.name,
+          student_phone: transferPreviewStudent.parentMobile || "",
+          from_institute_id: transferPreviewStudent.instituteId || "",
+          to_institute_id: newInstId,
+          request_status: "PENDING",
+          created_at: serverTimestamp()
+        });
+
+        setTransferSubmitSuccess(`स्थानांतरण अनुरोध (Transfer Request) सफलतापूर्वक भेज दिया गया है! एक बार जब वर्तमान संस्थान इसे अपने डैशबोर्ड से स्वीकृत (Approve) कर देगा, तो यह छात्र आपके डेटाबेस में आ जाएगा।`);
+        setTransferPreviewStudent(null);
+        setTransferCode("");
+        setConsentChecked(false);
+        
+        // Auto-close after a delay
+        setTimeout(() => {
+          setIsTransferModalOpen(false);
+          setTransferSubmitSuccess("");
+        }, 4000);
       }
-
-      // 3. Optional POST request to sync Express backend state
-      await fetch("/api/transfers/accept", {
-        method: "POST",
-        headers: { "application/json": "application/json" },
-        body: JSON.stringify({
-          student_unique_code: transferPreviewStudent.id,
-          transfer_pin: transferPin,
-          new_institute_id: newInstId
-        })
-      });
-
-      // 4. Refresh list of students
-      if (onRefreshStudents) {
-        await onRefreshStudents();
-      }
-
-      setTransferSubmitSuccess(`Transfer confirmed successfully! ${transferPreviewStudent.name} is now registered in your institute database.`);
-      setTransferPreviewStudent(null);
-      setTransferCode("");
-      setTransferPin("");
-      
-      // Auto-close after a delay
-      setTimeout(() => {
-        setIsTransferModalOpen(false);
-        setTransferSubmitSuccess("");
-      }, 3000);
     } catch (err: any) {
       console.error("Error accepting transfer:", err);
       setTransferPreviewError(err.message || "Failed to finalize student transfer. Please try again.");
@@ -986,6 +972,15 @@ export default function StudentManagerView({
 
       {/* Query Bar Cards */}
       <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+        
+        {/* Count display added here */}
+        <div className="flex items-center text-xs font-semibold text-slate-500">
+          <span>
+            {batchFilter ? "Students in selected batch:" : "Total students matching filters:"}
+            <span className="ml-2 px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-lg">{filteredStudents.length}</span>
+          </span>
+        </div>
+
         <div className="flex flex-col lg:flex-row gap-4">
           
           {/* Search box */}
@@ -1031,11 +1026,11 @@ export default function StudentManagerView({
                     <span>All Classes</span>
                     {!gradeFilter && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                   </button>
-                  {availableClasses.map((item) => {
+                  {availableClasses.map((item, index) => {
                     const isSelected = gradeFilter === item;
                     return (
                       <button
-                        key={item}
+                        key={`${item}-${index}`}
                         type="button"
                         onClick={() => {
                           setGradeFilter(item);
@@ -1144,7 +1139,7 @@ export default function StudentManagerView({
                       <td className="py-4 px-3 align-middle">
                         <div className="flex flex-wrap gap-1 max-w-[160px]">
                           { (s.subjects || []).map((sub) => (
-                            <span key={sub} className="bg-slate-100 text-slate-600 text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded">
+                            <span key={`${s.id}-${sub}`} className="bg-slate-100 text-slate-600 text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded">
                               {sub}
                             </span>
                           ))}
@@ -1700,47 +1695,14 @@ export default function StudentManagerView({
 
                 {/* Transfer / Release Section */}
                 <div className="pt-2 pb-1 space-y-2">
-                  {transferSuccessPin ? (
-                    <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 text-xs space-y-2">
-                      <div className="flex items-center gap-2 text-indigo-800 font-bold">
-                        <CheckCircle2 className="w-4 h-4 text-indigo-600 animate-bounce" />
-                        Student Released Successfully!
-                      </div>
-                      <p className="text-slate-600 leading-relaxed">
-                        The student is now in <strong className="text-indigo-700">READY_TO_TRANSFER</strong> status.
-                        The secure 4-digit Transfer PIN is:
-                      </p>
-                      <div className="bg-indigo-600 text-white font-mono text-center text-lg font-bold tracking-widest py-2 rounded-xl shadow-inner">
-                        {transferSuccessPin}
-                      </div>
-                      <p className="text-[10px] text-slate-500 italic text-center">
-                        📲 Mock SMS notification sent to parent {activeViewStudent.parentName} at {activeViewStudent.parentMobile} containing this PIN.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setTransferSuccessPin(null)}
-                        className="w-full text-indigo-600 hover:text-indigo-800 font-bold text-[11px] text-center mt-1 block cursor-pointer hover:underline"
-                      >
-                        Reset PIN View / Release Again
-                      </button>
-                    </div>
-                  ) : (
-                    <button 
-                      type="button" 
-                      onClick={() => handleReleaseStudent(activeViewStudent)}
-                      disabled={transferLoading}
-                      className="w-full bg-indigo-50 hover:bg-indigo-100 disabled:bg-slate-100 text-indigo-750 font-bold py-3 px-4 rounded-2xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 border border-indigo-100 shadow-sm"
-                    >
-                      {transferLoading ? (
-                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
-                      ) : (
-                        <RefreshCw className="w-4 h-4 text-indigo-600" />
-                      )}
-                      {activeViewStudent.status === "READY_TO_TRANSFER" 
-                        ? "Regenerate Transfer PIN" 
-                        : "Transfer / Release Student"}
-                    </button>
-                  )}
+                  <div className="bg-indigo-50/50 border border-indigo-100/60 rounded-2xl p-4 text-xs space-y-1.5">
+                    <p className="font-bold text-indigo-900 flex items-center gap-1.5">
+                      <span>🔄</span> स्थानांतरण प्रणाली (Transfer System)
+                    </p>
+                    <p className="text-slate-600 leading-relaxed">
+                      इस छात्र को अन्य संस्थान में स्थानांतरित करने के लिए केवल उनका <strong className="text-indigo-800">Unique Code</strong> ({activeViewStudent.id}) उनके साथ साझा करें। वे अपने डैशबोर्ड से अनुरोध (Transfer Request) भेजेंगे, जिसे आप अपने डैशबोर्ड पर स्वीकृत (Approve) कर सकते हैं।
+                    </p>
+                  </div>
                 </div>
 
                 <button 
@@ -2002,10 +1964,10 @@ export default function StudentManagerView({
                   <p className="text-xs leading-relaxed">{transferSubmitSuccess}</p>
                 </div>
               ) : !transferPreviewStudent ? (
-                /* Form for Unique Code and PIN */
+                /* Form for Unique Code */
                 <form onSubmit={handleFetchTransferPreview} className="space-y-4">
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    Enter the student's unique admission code and the 4-digit transfer PIN shared by their previous institute's master settings.
+                    विद्यार्थी का Unique Admission Code दर्ज़ करें। यदि वह पूर्व अकैडमिक सेशन का आर्काइव्ड (Deleted) छात्र है, तो बिना PIN के सीधे ट्रांसफर हो जाएगा। सक्रिय (Active) छात्रों के लिए स्थानांतरण अनुरोध (Transfer Request) भेजा जाएगा।
                   </p>
                   
                   {transferPreviewError && (
@@ -2023,19 +1985,6 @@ export default function StudentManagerView({
                         onChange={(e) => setTransferCode(e.target.value.toUpperCase())}
                         placeholder="e.g. STD-XXXXXX"
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none uppercase font-mono font-bold"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-650 mb-1">4-Digit Transfer PIN *</label>
-                      <input
-                        type="text"
-                        maxLength={4}
-                        value={transferPin}
-                        onChange={(e) => setTransferPin(e.target.value.replace(/\D/g, ""))}
-                        placeholder="e.g. 4921"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none font-mono text-center text-lg tracking-widest font-bold"
                         required
                       />
                     </div>
@@ -2060,6 +2009,16 @@ export default function StudentManagerView({
               ) : (
                 /* Read-Only Preview Screen */
                 <div className="space-y-5 animate-fade-in">
+                  {transferPreviewStudent.isNoPinTransfer && (
+                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3">
+                      <div className="p-1 bg-amber-100 text-amber-800 rounded-lg shrink-0 text-sm">⚠️</div>
+                      <div className="text-xs text-amber-850 space-y-1">
+                        <p className="font-bold">सत्र अंत (Master Reset) अभिलेख पाया गया</p>
+                        <p className="leading-relaxed">यह छात्र वर्तमान में आर्काइव्ड / सॉफ्ट-डिलीटेड है। हाइब्रिड नियमों के तहत, बिना किसी PIN या OTP के इसे सीधे नए अकैडमिक बैच में पुनः नामांकित किया जा सकता है।</p>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-4 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100/40">
                     <div className="w-12 h-12 bg-indigo-600 text-white rounded-full flex items-center justify-center font-display text-lg font-bold shadow-md">
                       {transferPreviewStudent.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "ST"}
@@ -2112,6 +2071,20 @@ export default function StudentManagerView({
                     </div>
                   </div>
 
+                  {transferPreviewStudent.isNoPinTransfer && (
+                    <label className="flex items-start gap-2.5 bg-indigo-50/40 p-4 rounded-2xl border border-indigo-150 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={consentChecked}
+                        onChange={(e) => setConsentChecked(e.target.checked)}
+                        className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="text-[11px] font-medium text-slate-700 leading-relaxed">
+                        I confirm that the parent is present and consents to this transfer. (मैं पुष्टि करता/करती हूँ कि अभिभावक उपस्थित हैं और इस स्थानांतरण के लिए सहमत हैं।)
+                      </span>
+                    </label>
+                  )}
+
                   {transferPreviewError && (
                     <div className="bg-rose-50 border border-rose-100 text-rose-750 p-3 rounded-xl text-xs font-semibold">
                       {transferPreviewError}
@@ -2121,7 +2094,10 @@ export default function StudentManagerView({
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
-                      onClick={() => setTransferPreviewStudent(null)}
+                      onClick={() => {
+                        setTransferPreviewStudent(null);
+                        setConsentChecked(false);
+                      }}
                       className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer text-center"
                     >
                       Cancel / Go Back
@@ -2129,12 +2105,16 @@ export default function StudentManagerView({
                     <button
                       type="button"
                       onClick={handleConfirmTransfer}
-                      disabled={transferPreviewLoading}
-                      className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-md hover:shadow-indigo-100"
+                      disabled={transferPreviewLoading || (transferPreviewStudent.isNoPinTransfer && !consentChecked)}
+                      className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-md hover:shadow-indigo-100 disabled:cursor-not-allowed"
                     >
                       {transferPreviewLoading ? (
                         <>
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Enrolling...
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Processing...
+                        </>
+                      ) : transferPreviewStudent.isRequestTransfer ? (
+                        <>
+                          <Send className="w-3.5 h-3.5" /> Submit Transfer Request
                         </>
                       ) : (
                         <>

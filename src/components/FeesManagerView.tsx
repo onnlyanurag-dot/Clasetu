@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { 
   DollarSign, 
   Send, 
@@ -7,10 +7,11 @@ import {
   Clock, 
   ChevronRight, 
   X,
-  Printer
-} from "lucide-react";
+  Printer,
+  ChevronDown
+ } from "lucide-react";
 import { jsPDF } from "jspdf";
-import { Student, FeeInstallment, InstituteSettings } from "../types";
+import { Student, FeeInstallment, InstituteSettings, Batch } from "../types";
 
 interface FeesManagerViewProps {
   students: Student[];
@@ -20,6 +21,7 @@ interface FeesManagerViewProps {
   settings?: InstituteSettings;
   isSubscribed?: boolean;
   onSubscriptionBlocked?: () => void;
+  batches?: Batch[];
 }
 
 export default function FeesManagerView({
@@ -29,11 +31,36 @@ export default function FeesManagerView({
   onTriggerReminder,
   settings,
   isSubscribed = true,
-  onSubscriptionBlocked
+  onSubscriptionBlocked,
+  batches = []
 }: FeesManagerViewProps) {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [selectedBatchId, setSelectedBatchId] = useState("");
+  const [isBatchDropdownOpen, setIsBatchDropdownOpen] = useState(false);
+  const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
+  
+  const batchDropdownRef = useRef<HTMLDivElement>(null);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (batchDropdownRef.current && !batchDropdownRef.current.contains(event.target as Node)) {
+        setIsBatchDropdownOpen(false);
+      }
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(event.target as Node)) {
+        setIsStatusDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, []);
+
   const [alertSuccess, setAlertSuccess] = useState("");
 
   // Dialogue folder state for a specific student's consolidated billing profile
@@ -80,6 +107,11 @@ export default function FeesManagerView({
     const instName = settings?.name || "Alpha Excellence Coaching";
     const instAddress = settings?.address || "Main Branch, City Center";
     const instContact = settings?.contact || "Phone: +91 98765 43210";
+    const instLogo = settings?.logo || "🎓";
+    const isImageLogo = instLogo.startsWith("data:image") || instLogo.startsWith("http");
+    const logoHtml = isImageLogo 
+      ? `<img src="${instLogo}" style="max-height: 50px; max-width: 150px; object-fit: contain; margin-bottom: 5px;" />` 
+      : `<div class="logo">${instLogo}</div>`;
 
     // 1. GENERATE & DOWNLOAD PDF WITH jspdf
     try {
@@ -88,6 +120,14 @@ export default function FeesManagerView({
         unit: "mm",
         format: "a5"
       });
+
+      if (isImageLogo) {
+        try {
+          doc.addImage(instLogo, "PNG", 12, 12, 12, 12);
+        } catch (e) {
+          console.error("Failed to add image logo to PDF:", e);
+        }
+      }
 
       // Simple, beautiful receipt layout on A5 page (148 x 210 mm)
       doc.setDrawColor(200, 200, 200);
@@ -357,7 +397,7 @@ export default function FeesManagerView({
       <body>
         <div class="receipt-container">
           <div class="header">
-            <div class="logo">🎓</div>
+            ${logoHtml}
             <h1 class="title">${instName}</h1>
             <p class="subtitle">${instAddress}</p>
             <p class="subtitle">${instContact}</p>
@@ -435,35 +475,45 @@ export default function FeesManagerView({
     }, 10000);
   };
 
-  const filteredStudentsWithBilling = students.filter((student) => {
+  // Filter students based on selected batch first
+  const studentsFilteredByBatch = selectedBatchId 
+    ? students.filter((s) => s.batchId === selectedBatchId)
+    : students;
+
+  const filteredStudentsWithBilling = studentsFilteredByBatch.filter((student) => {
     const query = searchQuery.toLowerCase();
     const studentInsts = installments.filter((i) => i.studentId === student.id);
     
     const matchesSearch = student.name.toLowerCase().includes(query) || student.id.toLowerCase().includes(query);
     
+    const totalPlanFees = studentInsts.reduce((s, inst) => s + inst.amount, 0);
+    const totalPaidQty = studentInsts.reduce((s, inst) => s + inst.paidAmount, 0);
+    const totalPendingQty = totalPlanFees - totalPaidQty;
+
     let passStatus = true;
     if (statusFilter !== "") {
-      const allPaid = studentInsts.every((i) => i.status === "Paid");
-      const hasPartial = studentInsts.some((i) => i.status === "Partially Paid");
-      const hasUnpaid = studentInsts.some((i) => i.status === "Unpaid");
-
       if (statusFilter === "Paid") {
-        passStatus = allPaid;
+        // Fully Paid: has installments, and outstanding balance is 0
+        passStatus = studentInsts.length > 0 && totalPendingQty === 0;
       } else if (statusFilter === "Partially Paid") {
-        passStatus = hasPartial;
+        // Partially Paid: has some paid amount, but still has some pending balance
+        passStatus = totalPaidQty > 0 && totalPendingQty > 0;
       } else if (statusFilter === "Unpaid") {
-        passStatus = hasUnpaid && !allPaid;
+        // With Unpaid Outstandings: has pending balance (covers both completely unpaid and partially paid)
+        passStatus = totalPendingQty > 0;
       }
     }
 
     return matchesSearch && passStatus;
   });
 
-  const totalDueSum = installments.reduce((sum, inst) => sum + inst.amount, 0);
-  const totalCollectedSum = installments.reduce((sum, inst) => sum + inst.paidAmount, 0);
-  const totalPendingSum = installments.reduce((sum, inst) => {
-    return inst.status !== "Paid" ? sum + (inst.amount - inst.paidAmount) : sum;
-  }, 0);
+  // Filter installments to only belong to the visible filtered students
+  const visibleStudentIds = new Set(filteredStudentsWithBilling.map((s) => s.id));
+  const visibleInstallments = installments.filter((i) => visibleStudentIds.has(i.studentId));
+
+  const totalDueSum = visibleInstallments.reduce((sum, inst) => sum + inst.amount, 0);
+  const totalCollectedSum = visibleInstallments.reduce((sum, inst) => sum + inst.paidAmount, 0);
+  const totalPendingSum = totalDueSum - totalCollectedSum;
 
   return (
     <div className="space-y-6">
@@ -526,16 +576,136 @@ export default function FeesManagerView({
           />
         </div>
 
-        <select 
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-700 w-full md:w-48"
-        >
-          <option value="">All Ledger Status</option>
-          <option value="Paid">Fully Paid Profiles</option>
-          <option value="Partially Paid">With Partial payments</option>
-          <option value="Unpaid">With Unpaid outstandings</option>
-        </select>
+        {/* Custom Batch Dropdown */}
+        <div ref={batchDropdownRef} className="relative w-full md:w-48 animate-fade-in">
+          <button
+            type="button"
+            onClick={() => {
+              setIsBatchDropdownOpen(!isBatchDropdownOpen);
+              setIsStatusDropdownOpen(false);
+            }}
+            className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 w-full flex items-center justify-between cursor-pointer focus:outline-none transition-colors h-11"
+          >
+            <span className="truncate">
+              {selectedBatchId 
+                ? batches.find(b => b.id === selectedBatchId)?.name || "All Batches" 
+                : "All Batches"}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0 ml-2" />
+          </button>
+          
+          {isBatchDropdownOpen && (
+            <>
+              {/* Full-screen backdrop with light blur to dismiss on tap anywhere */}
+              <div 
+                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsBatchDropdownOpen(false);
+                }}
+              />
+              <div className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-150 rounded-xl shadow-xl py-1.5 z-50 max-h-56 overflow-y-auto text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedBatchId("");
+                    setIsBatchDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors ${!selectedBatchId ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                >
+                  All Batches
+                </button>
+                {batches.map((batch) => (
+                  <button
+                    key={batch.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedBatchId(batch.id);
+                      setIsBatchDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors truncate ${selectedBatchId === batch.id ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                  >
+                    {batch.name}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Custom Status Dropdown */}
+        <div ref={statusDropdownRef} className="relative w-full md:w-48 animate-fade-in">
+          <button
+            type="button"
+            onClick={() => {
+              setIsStatusDropdownOpen(!isStatusDropdownOpen);
+              setIsBatchDropdownOpen(false);
+            }}
+            className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-700 w-full flex items-center justify-between cursor-pointer focus:outline-none transition-colors h-11"
+          >
+            <span className="truncate">
+              {statusFilter === "Paid" ? "Fully Paid Profiles" :
+               statusFilter === "Partially Paid" ? "With Partial payments" :
+               statusFilter === "Unpaid" ? "With Unpaid outstandings" : "All Ledger Status"}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-500 flex-shrink-0 ml-2" />
+          </button>
+          
+          {isStatusDropdownOpen && (
+            <>
+              {/* Full-screen backdrop with light blur to dismiss on tap anywhere */}
+              <div 
+                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in" 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsStatusDropdownOpen(false);
+                }}
+              />
+              <div className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-150 rounded-xl shadow-xl py-1.5 z-50 max-h-56 overflow-y-auto text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("");
+                    setIsStatusDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors ${!statusFilter ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                >
+                  All Ledger Status
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("Paid");
+                    setIsStatusDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors ${statusFilter === "Paid" ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                >
+                  Fully Paid Profiles
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("Partially Paid");
+                    setIsStatusDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors ${statusFilter === "Partially Paid" ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                >
+                  With Partial payments
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("Unpaid");
+                    setIsStatusDropdownOpen(false);
+                  }}
+                  className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors ${statusFilter === "Unpaid" ? "text-emerald-600 font-bold bg-emerald-50/30" : ""}`}
+                >
+                  With Unpaid outstandings
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Grouped Student Billing Directory List */}
@@ -833,6 +1003,7 @@ export default function FeesManagerView({
                                     {(localStorage.getItem(`paymode-${inst.id}`) || "Cash") === "Cash" ? "💵 Cash" : "📱 Bank/Online"}
                                   </span>
                                   <span className="text-[9px] text-slate-400 block font-semibold leading-normal">Receipt Posted: {inst.paymentDate}</span>
+                                  <span className="text-[9px] text-indigo-600 block font-mono font-bold leading-normal bg-indigo-50/50 px-1.5 py-0.5 rounded border border-indigo-100/40 mt-0.5 text-center">REC-{inst.id.substring(0, 8).toUpperCase()}</span>
                                 </div>
                                 <button
                                   onClick={() => handlePrintReceipt(selectedStudent, inst)}

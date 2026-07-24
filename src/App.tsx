@@ -15,7 +15,7 @@ import {
   MoreVertical,
   AlertTriangle
 } from "lucide-react";
-import { Student, Batch, FeeInstallment, AttendanceRecord, Notice, NotificationLog, InstituteSettings, Teacher } from "./types";
+import { Student, Batch, FeeInstallment, AttendanceRecord, Notice, NotificationLog, InstituteSettings, Teacher, TransferRequest } from "./types";
 import AuthPage from "./components/AuthPage";
 import DashboardView from "./components/DashboardView";
 import StudentManagerView from "./components/StudentManagerView";
@@ -59,6 +59,7 @@ export default function App() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [logs, setLogs] = useState<NotificationLog[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [transferRequests, setTransferRequests] = useState<TransferRequest[]>([]);
   const [settings, setSettings] = useState<InstituteSettings>({
     name: "ClassSetu Premium Coaching",
     logo: "🎓",
@@ -197,7 +198,10 @@ export default function App() {
       const querySnap = await getDocs(studentsQuery);
       const studentRecords: Student[] = [];
       querySnap.forEach((stSnap) => {
-        studentRecords.push(stSnap.data() as Student);
+        const studentData = stSnap.data();
+        if (studentData.deleted_status !== 1) {
+          studentRecords.push(studentData as Student);
+        }
       });
       setStudents(studentRecords);
 
@@ -230,6 +234,33 @@ export default function App() {
         setTeachers(teacherRecords);
       } catch (teacherErr) {
         console.error("Error loading teachers:", teacherErr);
+      }
+
+      // Live synchronization of incoming transfer requests where from_institute_id == uid
+      try {
+        const incomingRequestsQuery = query(
+          collection(db, "transfer_requests"),
+          where("from_institute_id", "==", uid)
+        );
+        onSnapshot(incomingRequestsQuery, (snapshot) => {
+          const reqs: TransferRequest[] = [];
+          snapshot.docs.forEach((d) => {
+            const data = d.data();
+            reqs.push({
+              id: d.id,
+              student_code: data.student_code || "",
+              student_name: data.student_name || "",
+              student_phone: data.student_phone || "",
+              from_institute_id: data.from_institute_id || "",
+              to_institute_id: data.to_institute_id || "",
+              request_status: data.request_status || "PENDING",
+              created_at: data.created_at
+            } as TransferRequest);
+          });
+          setTransferRequests(reqs);
+        });
+      } catch (err) {
+        console.error("Error listening to transfer requests:", err);
       }
 
     } catch (err) {
@@ -325,7 +356,10 @@ export default function App() {
       const querySnap = await getDocs(studentsQuery);
       const studentRecords: Student[] = [];
       querySnap.forEach((stSnap) => {
-        studentRecords.push(stSnap.data() as Student);
+        const studentData = stSnap.data();
+        if (studentData.deleted_status !== 1) {
+          studentRecords.push(studentData as Student);
+        }
       });
       setStudents(studentRecords);
     } catch (err) {
@@ -400,6 +434,8 @@ export default function App() {
         totalFees: newStudent.totalFees,
         batchId: newStudent.batchId,
         instituteId: user.uid,
+        institute_id: user.uid,
+        deleted_status: 0,
         status: "active",
         createdAt: serverTimestamp()
       });
@@ -501,12 +537,16 @@ export default function App() {
         const { batchId, ...otherFields } = updatedStudent;
         await setDoc(doc(db, "students", id), {
           ...otherFields,
-          instituteId: user.uid
+          instituteId: user.uid,
+          institute_id: user.uid,
+          deleted_status: updatedStudent.deleted_status !== undefined ? updatedStudent.deleted_status : 0
         }, { merge: true });
       } else {
         await setDoc(doc(db, "students", id), {
           ...updatedStudent,
-          instituteId: user.uid
+          instituteId: user.uid,
+          institute_id: user.uid,
+          deleted_status: updatedStudent.deleted_status !== undefined ? updatedStudent.deleted_status : 0
         });
       }
 
@@ -517,6 +557,50 @@ export default function App() {
     } catch (err) {
       console.error("Failed to update student in Firestore:", err);
       handleFirestoreError(err, OperationType.UPDATE, `students/${id}`);
+    }
+  };
+
+  const handleApproveTransferRequest = async (request: TransferRequest) => {
+    try {
+      // 1. Update the student document's instituteId to the requesting (to) institute
+      const studentRef = doc(db, "students", request.student_code);
+      await updateDoc(studentRef, {
+        instituteId: request.to_institute_id,
+        institute_id: request.to_institute_id,
+        deleted_status: 0,
+        status: "ACTIVE"
+      });
+
+      // 2. Update the transfer request status to 'APPROVED'
+      const requestRef = doc(db, "transfer_requests", request.id);
+      await updateDoc(requestRef, {
+        request_status: "APPROVED",
+        resolved_at: serverTimestamp()
+      });
+
+      // 3. Remove the student from local state list (since they no longer belong to this institute)
+      setStudents((prev) => prev.filter((s) => s.id !== request.student_code));
+
+      alert(`Transfer request for student ${request.student_name} approved successfully.`);
+    } catch (err) {
+      console.error("Failed to approve transfer request:", err);
+      alert("Failed to approve transfer request. Please try again.");
+    }
+  };
+
+  const handleRejectTransferRequest = async (request: TransferRequest) => {
+    try {
+      // Update the transfer request status to 'REJECTED'
+      const requestRef = doc(db, "transfer_requests", request.id);
+      await updateDoc(requestRef, {
+        request_status: "REJECTED",
+        resolved_at: serverTimestamp()
+      });
+
+      alert(`Transfer request for student ${request.student_name} rejected.`);
+    } catch (err) {
+      console.error("Failed to reject transfer request:", err);
+      alert("Failed to reject transfer request. Please try again.");
     }
   };
 
@@ -814,6 +898,8 @@ export default function App() {
       const currentNotices: Notice[] = currentData.notices || [];
       const currentLogs: NotificationLog[] = currentData.logs || [];
 
+      const selectedMedium = noticeData.medium || "WhatsApp";
+
       const newNotice: Notice = {
         id: `NTC-${Math.floor(100 + Math.random() * 900)}`,
         title: noticeData.title || "Announcement",
@@ -821,7 +907,8 @@ export default function App() {
         recipientType: noticeData.recipientType || "All Students",
         recipients: Array.isArray(noticeData.selectedStudentIds) ? noticeData.selectedStudentIds : [],
         sentAt: new Date().toISOString(),
-        status: "Delivered"
+        status: "Delivered",
+        medium: selectedMedium
       };
 
       currentNotices.push(newNotice);
@@ -836,10 +923,11 @@ export default function App() {
           id: `LOG-${Math.floor(1000 + Math.random() * 9000)}`,
           studentId: student.id,
           type: "notice",
-          recipientMobile: student.parentMobile,
+          recipientMobile: student.parentMobile || student.alternateMobile || "+91 00000 00000",
           text: `NOTICE (${newNotice.title}): ${newNotice.body}`,
           sentAt: new Date().toISOString(),
-          status: "Sent"
+          status: "Sent",
+          medium: selectedMedium
         });
       });
 
@@ -850,6 +938,32 @@ export default function App() {
         notices: currentNotices,
         logs: currentLogs
       });
+
+      // Update communication counts in institutes doc
+      const instRef = doc(db, "institutes", user.uid);
+      const instSnap = await getDoc(instRef);
+      if (instSnap.exists() && targetStudents.length > 0) {
+        const instData = instSnap.data();
+        const count = targetStudents.length;
+
+        if (selectedMedium === "SMS") {
+          const smsLimit = Number(instData.smsLimit ?? 0);
+          const smsSent = Number(instData.smsSent ?? 0) + count;
+          const smsLeft = Math.max(0, smsLimit - smsSent);
+          await updateDoc(instRef, {
+            smsSent,
+            smsLeft
+          });
+        } else {
+          const whatsappLimit = Number(instData.whatsappLimit ?? 0);
+          const whatsappSent = Number(instData.whatsappSent ?? 0) + count;
+          const whatsappLeft = Math.max(0, whatsappLimit - whatsappSent);
+          await updateDoc(instRef, {
+            whatsappSent,
+            whatsappLeft
+          });
+        }
+      }
     } catch (err) {
       console.error("Failed to post notice in Firestore:", err);
       handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
@@ -879,12 +993,7 @@ export default function App() {
 
   // Reset all student data locally on complete academic season clear
   const handleResetAllStudentData = () => {
-    setStudents((prev) => 
-      prev.map((student) => ({
-        ...student,
-        status: "ARCHIVED" as any
-      }))
-    );
+    setStudents([]);
   };
 
   const handleAddTeacherState = (newTeacher: Teacher) => {
@@ -892,6 +1001,10 @@ export default function App() {
       if (prev.some(t => t.id === newTeacher.id)) return prev;
       return [...prev, newTeacher];
     });
+  };
+
+  const handleDeleteTeacherState = (teacherId: string) => {
+    setTeachers((prev) => prev.filter((t) => t.id !== teacherId));
   };
 
   // Commit AI batch planners allocation
@@ -1021,8 +1134,12 @@ export default function App() {
           
           {/* Logo & Institute names branding */}
           <div className="flex items-center gap-3">
-            <div className="text-2xl bg-emerald-600 h-10 w-10 mt-0.5 rounded-xl shadow-inner flex items-center justify-center select-none">
-              {settings.logo || "🎓"}
+            <div className="text-2xl bg-emerald-600 h-10 w-10 mt-0.5 rounded-xl shadow-inner flex items-center justify-center select-none overflow-hidden">
+              {settings.logo && (settings.logo.startsWith("data:image") || settings.logo.startsWith("http")) ? (
+                <img src={settings.logo} alt="Logo" className="w-full h-full object-cover" />
+              ) : (
+                settings.logo || "🎓"
+              )}
             </div>
             <div>
               <h1 className="font-display font-black text-lg tracking-tight uppercase leading-none">
@@ -1181,6 +1298,9 @@ export default function App() {
                installments={installments} 
                attendance={attendance} 
                instituteData={instituteData}
+               transferRequests={transferRequests}
+               onApproveRequest={handleApproveTransferRequest}
+               onRejectRequest={handleRejectTransferRequest}
                onNavigate={(id, action) => {
                   setActiveTab(id);
                   if (id === "students" && action === "add") {
@@ -1228,7 +1348,8 @@ export default function App() {
            {activeTab === "fees" && (
              <FeesManagerView 
                students={students} 
-               installments={installments} 
+               installments={installments}
+                batches={batches} 
                onPayInstallment={handlePayInstallment}
                onTriggerReminder={handleTriggerReminder}
                 isSubscribed={isSubscribed}
@@ -1245,6 +1366,7 @@ export default function App() {
                onSendNotice={handleSendNotice}
                 isSubscribed={isSubscribed}
                 onSubscriptionBlocked={() => setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.")}
+                instituteData={instituteData}
              />
            )}
 
@@ -1262,6 +1384,7 @@ export default function App() {
              <ReportsSettingsView 
                 teachers={teachers}
                 onAddTeacherState={handleAddTeacherState}
+                 onDeleteTeacherState={handleDeleteTeacherState}
                settings={settings} 
                onUpdateSettings={handleUpdateSettings}
                batches={batches}

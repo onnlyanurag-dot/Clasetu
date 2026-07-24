@@ -27,6 +27,8 @@ export interface Student {
   password?: string;
   createdAt?: any; // To support Firestore Timestamp or string
   instituteId?: string;
+  institute_id?: string;
+  deleted_status?: number;
   class?: string;
   classLevel?: string;
 }
@@ -90,6 +92,7 @@ export interface Notice {
   recipients: string[];
   sentAt: string;
   status: "Delivered" | "Failed";
+  medium?: "WhatsApp" | "SMS";
 }
 
 export interface NotificationLog {
@@ -100,4 +103,17 @@ export interface NotificationLog {
   text: string;
   sentAt: string;
   status: "Sent" | "Blocked";
+  medium?: "WhatsApp" | "SMS";
 }
+
+export interface TransferRequest {
+  id: string;
+  student_code: string;
+  student_name: string;
+  student_phone: string;
+  from_institute_id: string;
+  to_institute_id: string;
+  request_status: "PENDING" | "APPROVED" | "REJECTED";
+  created_at: any;
+}
+

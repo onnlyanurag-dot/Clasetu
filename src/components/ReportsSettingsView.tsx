@@ -15,10 +15,11 @@ import {
   Unlock,
   AlertTriangle,
   Trash2,
-  Download
+  Download,
+  Upload
 } from "lucide-react";
 import { InstituteSettings, Teacher, Student, Batch } from "../types";
-import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, writeBatch } from "firebase/firestore";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { auth, secondaryAuth, db } from "../firebase";
 
@@ -27,6 +28,7 @@ interface ReportsSettingsViewProps {
   onUpdateSettings: (s: InstituteSettings) => Promise<any>;
   teachers: Teacher[];
   onAddTeacherState: (t: Teacher) => void;
+  onDeleteTeacherState?: (id: string) => void;
   batches: Batch[];
   students: Student[];
   onResetAllStudentData?: () => void;
@@ -34,11 +36,55 @@ interface ReportsSettingsViewProps {
   onSubscriptionBlocked?: () => void;
 }
 
+const resizeImageAndGetBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 150;
+        const MAX_HEIGHT = 150;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(event.target?.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/png");
+        resolve(dataUrl);
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+};
+
 export default function ReportsSettingsView({
   settings,
   onUpdateSettings,
   teachers = [],
   onAddTeacherState,
+  onDeleteTeacherState,
   batches = [],
   students = [],
   onResetAllStudentData,
@@ -288,6 +334,11 @@ export default function ReportsSettingsView({
   const [passwordSuccess, setPasswordSuccess] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
+  // Teacher deletion state
+  const [teacherToDelete, setTeacherToDelete] = useState<Teacher | null>(null);
+  const [isDeletingTeacher, setIsDeletingTeacher] = useState(false);
+  const [deleteTeacherError, setDeleteTeacherError] = useState("");
+
   // --- END OF ACADEMIC YEAR RESET STATES & HANDLERS ---
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -305,7 +356,7 @@ export default function ReportsSettingsView({
 
   // Background scroll lock effect when selected teacher or delete modal is active
   useEffect(() => {
-    if (selectedTeacher || showDeleteModal) {
+    if (selectedTeacher || showDeleteModal || teacherToDelete) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -313,7 +364,7 @@ export default function ReportsSettingsView({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [selectedTeacher, showDeleteModal]);
+  }, [selectedTeacher, showDeleteModal, teacherToDelete]);
 
   const handleUnlockSystem = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -360,9 +411,7 @@ export default function ReportsSettingsView({
 
     sortedClasses.forEach((className) => {
       // Class Header Section
-      csvRows.push([`"============================================================="`]);
-      csvRows.push([`"CLASS / GRADE: ${className.toUpperCase()}"`]);
-      csvRows.push([`"============================================================="`]);
+      csvRows.push([`--- CLASS: ${className.toUpperCase()} ---`]);
       
       // Column headers for this class
       csvRows.push([
@@ -378,8 +427,10 @@ export default function ReportsSettingsView({
         "Status"
       ]);
 
-      // Students
-      const classStudents = studentsByClass[className];
+      // Students sorted within class by name ascending
+      const classStudents = [...studentsByClass[className]].sort((a, b) => 
+        a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+      );
       classStudents.forEach((s) => {
         csvRows.push([
           s.id,
@@ -395,12 +446,14 @@ export default function ReportsSettingsView({
         ]);
       });
 
-      csvRows.push([]); // Empty spacer row after each class group
-      csvRows.push([]); // Spacer
+      csvRows.push([]); // Empty separator row after each class group
     });
 
     const csvContent = csvRows
-      .map((row) => row.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(","))
+      .map((row) => {
+        if (row.length === 0) return "";
+        return row.map((val) => `"${String(val).replace(/"/g, '""')}"`).join(",");
+      })
       .join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -438,17 +491,21 @@ export default function ReportsSettingsView({
         throw new Error("No active authenticated user session found.");
       }
       
-      // Bulk update student documents status to "ARCHIVED" where instituteId = user.uid and status !== "ARCHIVED"
+      // Bulk update student documents to deleted_status = 1 (soft-delete)
       const studentsQuery = query(collection(db, "students"), where("instituteId", "==", user.uid));
       const studentsSnap = await getDocs(studentsQuery);
       
+      const batch = writeBatch(db);
+      let count = 0;
       for (const studentDoc of studentsSnap.docs) {
-        const currentStatus = studentDoc.data().status;
-        if (currentStatus !== "ARCHIVED" && currentStatus !== "archived") {
-          await updateDoc(doc(db, "students", studentDoc.id), {
-            status: "ARCHIVED"
-          });
-        }
+        batch.update(doc(db, "students", studentDoc.id), {
+          deleted_status: 1
+        });
+        count++;
+      }
+      
+      if (count > 0) {
+        await batch.commit();
       }
 
       // Reset states locally in App.tsx using prop callback
@@ -1051,18 +1108,73 @@ export default function ReportsSettingsView({
 
             <form onSubmit={handleSettingsSubmit} className="space-y-4">
               
-              <div className="grid grid-cols-4 gap-4">
-                <div className="col-span-1">
-                  <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Logo/emoji</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={logo}
-                    onChange={(e) => setLogo(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center text-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                  {/* Logo Preview and Upload */}
+                  <div className="col-span-1 flex flex-col items-center justify-center p-3 bg-slate-50 border border-slate-200 rounded-2xl h-36 relative group">
+                    <span className="text-[10px] text-slate-400 absolute top-2 font-bold tracking-wider">PREVIEW</span>
+                    <div className="w-16 h-16 rounded-xl bg-emerald-600 shadow-inner flex items-center justify-center overflow-hidden text-3xl text-white select-none mt-2">
+                      {logo && (logo.startsWith("data:image") || logo.startsWith("http")) ? (
+                        <img src={logo} alt="Institute Logo" className="w-full h-full object-cover" />
+                      ) : (
+                        logo || "🎓"
+                      )}
+                    </div>
+                    {logo && (logo.startsWith("data:image") || logo.startsWith("http")) && (
+                      <button
+                        type="button"
+                        onClick={() => setLogo("🎓")}
+                        className="absolute bottom-2 text-[10px] text-rose-500 font-bold hover:underline cursor-pointer"
+                      >
+                        Reset to Emoji
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Upload Controls */}
+                  <div className="col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Upload Image Logo (संस्थान का लोगो अपलोड करें)</label>
+                      <label className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-dashed border-slate-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 cursor-pointer transition-all group h-[42px]">
+                        <Upload className="w-4 h-4 text-slate-400 group-hover:text-emerald-600" />
+                        <span className="text-xs font-bold text-slate-700 group-hover:text-emerald-600">
+                          Choose Logo File
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const base64 = await resizeImageAndGetBase64(file);
+                                setLogo(base64);
+                              } catch (err) {
+                                console.error("Failed to process image:", err);
+                                alert("Failed to process image. Please try again.");
+                              }
+                            }
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="sm:col-span-1">
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Or Text/Emoji</label>
+                      <input 
+                        type="text" 
+                        maxLength={10}
+                        value={logo && (logo.startsWith("data:image") || logo.startsWith("http")) ? "" : logo}
+                        onChange={(e) => setLogo(e.target.value || "🎓")}
+                        placeholder="🎓"
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 h-[42px]"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="col-span-3">
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Institute Name</label>
                   <input 
                     type="text" 
@@ -1259,7 +1371,7 @@ export default function ReportsSettingsView({
                             <td className="py-3.5 px-3 text-slate-400 font-mono text-center">
                               {teacher.createdAt ? new Date(teacher.createdAt).toLocaleDateString() : "—"}
                             </td>
-                            <td className="py-3.5 px-4 text-right">
+                            <td className="py-3.5 px-4 text-right flex items-center justify-end gap-1.5">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1271,6 +1383,16 @@ export default function ReportsSettingsView({
                                 className="bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 font-bold px-2.5 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all cursor-pointer"
                               >
                                 Edit Password
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setTeacherToDelete(teacher);
+                                  setDeleteTeacherError("");
+                                }}
+                                className="bg-rose-50 text-rose-700 border border-rose-100 hover:bg-rose-100 font-bold px-2 py-1.5 rounded-lg text-[10px] uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <Trash2 className="w-3 h-3" /> Delete
                               </button>
                             </td>
                           </tr>
@@ -1405,6 +1527,93 @@ export default function ReportsSettingsView({
                     </>
                   ) : (
                     "Save/Update Password"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Teacher Deletion Confirmation Modal */}
+      {teacherToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 border border-slate-100 shadow-2xl relative animate-fade-in space-y-6">
+            <div className="flex justify-between items-center pb-4 border-b">
+              <div>
+                <h3 className="font-display font-bold text-lg text-slate-800 flex items-center gap-2">
+                  <Trash2 className="w-5 h-5 text-rose-600" /> Remove Teacher Account
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  शिक्षक का सब-अकाउंट स्थायी रूप से हटाएं
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTeacherToDelete(null)}
+                className="text-slate-450 hover:text-slate-700 font-bold p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 bg-rose-50/50 rounded-2xl border border-rose-100 text-xs space-y-2">
+                <p className="font-bold text-slate-800">Are you sure you want to delete this teacher account?</p>
+                <p className="text-slate-600 leading-relaxed">
+                  Deleting <span className="font-bold text-slate-800">"{teacherToDelete.name}"</span> ({teacherToDelete.email}) will remove their access to App 3 (Teacher Portal). This action is permanent and cannot be undone.
+                </p>
+              </div>
+
+              {deleteTeacherError && (
+                <div className="p-3 bg-rose-50 border-l-4 border-rose-600 rounded-xl text-rose-850 text-xs font-semibold leading-relaxed">
+                  {deleteTeacherError}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setTeacherToDelete(null)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-150 text-slate-700 font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all text-center cursor-pointer border border-slate-150"
+                  disabled={isDeletingTeacher}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingTeacher}
+                  onClick={async () => {
+                    if (isSubscribed === false) {
+                      onSubscriptionBlocked?.();
+                      setTeacherToDelete(null);
+                      return;
+                    }
+                    setIsDeletingTeacher(true);
+                    setDeleteTeacherError("");
+                    try {
+                      const teacherDocRef = doc(db, "teachers", teacherToDelete.id);
+                      await deleteDoc(teacherDocRef);
+                      
+                      // Notify parent to remove teacher from state
+                      onDeleteTeacherState?.(teacherToDelete.id);
+                      
+                      setTeacherToDelete(null);
+                    } catch (err: any) {
+                      console.error("Failed to delete teacher sub-account:", err);
+                      setDeleteTeacherError(err.message || "An unexpected error occurred during deletion.");
+                    } finally {
+                      setIsDeletingTeacher(false);
+                    }
+                  }}
+                  className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold py-2.5 rounded-xl text-xs uppercase tracking-wider transition-all text-center cursor-pointer flex justify-center items-center gap-1.5 disabled:opacity-55"
+                >
+                  {isDeletingTeacher ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" /> Deleting...
+                    </>
+                  ) : (
+                    "Confirm Delete"
                   )}
                 </button>
               </div>
