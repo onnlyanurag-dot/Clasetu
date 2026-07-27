@@ -11,6 +11,7 @@ import {
   FileText
 } from "lucide-react";
 import { Student, Notice, NotificationLog } from "../types";
+import { isPayAsYouGoModel } from "../utils";
 
 interface WhatsAppCenterViewProps {
   students: Student[];
@@ -20,6 +21,7 @@ interface WhatsAppCenterViewProps {
   isSubscribed?: boolean;
   onSubscriptionBlocked?: () => void;
   instituteData?: {
+    billingModel?: string;
     isWhatsAppEnabled?: boolean;
     isSmsEnabled?: boolean;
     whatsappLimit?: number;
@@ -97,6 +99,8 @@ export default function WhatsAppCenterView({
   // Sort logs by sent date (newest first)
   const sortedLogs = [...logs].sort((a, b) => b.sentAt.localeCompare(a.sentAt));
 
+  const isPayAsYouGo = isPayAsYouGoModel(instituteData);
+
   const whatsappLimit = Number(instituteData?.whatsappLimit ?? 0);
   const whatsappSent = Number(instituteData?.whatsappSent ?? 0);
   const whatsappRemaining = Math.max(0, whatsappLimit - whatsappSent);
@@ -170,7 +174,12 @@ export default function WhatsAppCenterView({
                 {/* Balance indicator */}
                 <div className="mt-2 flex justify-between items-center text-[10px] font-semibold text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">
                   <span>Balance Available:</span>
-                  {broadcastMedium === "WhatsApp" ? (
+                  {isPayAsYouGo ? (
+                    <span className="text-purple-700 font-mono font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse"></span>
+                      Pay As You Go (No Limit) — Used: {broadcastMedium === "WhatsApp" ? whatsappSent : smsSent} msgs
+                    </span>
+                  ) : broadcastMedium === "WhatsApp" ? (
                     <span className="text-emerald-700 font-mono font-bold">
                       {whatsappRemaining} / {whatsappLimit} free credits
                     </span>

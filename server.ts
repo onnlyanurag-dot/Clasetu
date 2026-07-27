@@ -248,6 +248,7 @@ async function sendSmsNotification(parentMobile: string, studentName: string, pa
 
 interface InstituteDoc {
   id: string;
+  billingModel?: string;
   isWhatsAppEnabled: boolean;
   isSmsEnabled: boolean;
   whatsappLimit: number;
@@ -260,26 +261,40 @@ interface InstituteDoc {
 
 async function fetchInstituteFromFirestore(instituteId: string): Promise<InstituteDoc | null> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/institutes/${instituteId}`;
-    const res = await fetch(url);
+    let url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/institutes/${instituteId}`;
+    let res = await fetch(url);
+    if (!res.ok) {
+      url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/users/${instituteId}`;
+      res = await fetch(url);
+    }
     if (res.ok) {
       const data = await res.json();
       const fields = data.fields || {};
-      const whatsappLimit = Number(fields.whatsappLimit?.integerValue || fields.whatsappLimit?.doubleValue || 0);
-      const whatsappSent = Number(fields.whatsappSent?.integerValue || fields.whatsappSent?.doubleValue || 0);
-      const smsLimit = Number(fields.smsLimit?.integerValue || fields.smsLimit?.doubleValue || 0);
-      const smsSent = Number(fields.smsSent?.integerValue || fields.smsSent?.doubleValue || 0);
+      const rawModel = fields.billingModel?.stringValue || fields.billing_model?.stringValue || fields.plan?.stringValue || fields.planType?.stringValue || "";
+      const isPayAsYouGoFlag = fields.isPayAsYouGo?.booleanValue || fields.payAsYouGo?.booleanValue || fields.is_pay_as_you_go?.booleanValue || false;
+      const clean = rawModel.trim().toUpperCase().replace(/[\s\-_]/g, '');
+      const isPayAsYouGo = isPayAsYouGoFlag || clean === "PAYASYOUGO" || clean === "PAYPERUSE" || clean === "POSTPAID" || clean === "UNCAPPED";
+      const billingModel = isPayAsYouGo ? "PAY_AS_YOU_GO" : (rawModel || "FIXED");
+
+      const whatsappLimit = Number(fields.whatsappLimit?.integerValue || fields.whatsappLimit?.doubleValue || fields.whatsapp_limit?.integerValue || fields.whatsapp_limit?.doubleValue || 0);
+      const whatsappSent = Number(fields.whatsappSent?.integerValue || fields.whatsappSent?.doubleValue || fields.whatsapp_sent?.integerValue || fields.whatsapp_sent?.doubleValue || 0);
+      const smsLimit = Number(fields.smsLimit?.integerValue || fields.smsLimit?.doubleValue || fields.sms_limit?.integerValue || fields.sms_limit?.doubleValue || 0);
+      const smsSent = Number(fields.smsSent?.integerValue || fields.smsSent?.doubleValue || fields.sms_sent?.integerValue || fields.sms_sent?.doubleValue || 0);
+
+      const isWhatsAppEnabled = fields.isWhatsAppEnabled?.booleanValue ?? fields.isWhatsappEnabled?.booleanValue ?? true;
+      const isSmsEnabled = fields.isSmsEnabled?.booleanValue ?? fields.isSmsEnabled?.booleanValue ?? true;
 
       return {
         id: instituteId,
-        isWhatsAppEnabled: fields.isWhatsAppEnabled?.booleanValue || false,
-        isSmsEnabled: fields.isSmsEnabled?.booleanValue || false,
+        billingModel,
+        isWhatsAppEnabled,
+        isSmsEnabled,
         whatsappLimit,
         whatsappSent,
-        whatsappLeft: Math.max(0, whatsappLimit - whatsappSent),
+        whatsappLeft: isPayAsYouGo ? 999999 : Math.max(0, whatsappLimit - whatsappSent),
         smsLimit,
         smsSent,
-        smsLeft: Math.max(0, smsLimit - smsSent)
+        smsLeft: isPayAsYouGo ? 999999 : Math.max(0, smsLimit - smsSent)
       };
     }
   } catch (err) {
@@ -1041,6 +1056,9 @@ export async function createExpressApp() {
         
         // Load live communication settings and limits from Firestore REST
         const instData = await fetchInstituteFromFirestore(instId);
+        const billingModel = instData?.billingModel || "FIXED";
+        const isPayAsYouGo = billingModel === "PAY_AS_YOU_GO";
+
         let whatsappSentLocal = instData ? instData.whatsappSent : 0;
         const whatsappLimitLocal = instData ? instData.whatsappLimit : 0;
         const isWhatsAppEnabledLocal = instData ? instData.isWhatsAppEnabled : false;
@@ -1049,14 +1067,15 @@ export async function createExpressApp() {
         const smsLimitLocal = instData ? instData.smsLimit : 0;
         const isSmsEnabledLocal = instData ? instData.isSmsEnabled : false;
 
-        console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId})`);
-        console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Limit=${whatsappLimitLocal}, Sent=${whatsappSentLocal}`);
-        console.log(`[API Settings] SMS: Enabled=${isSmsEnabledLocal}, Limit=${smsLimitLocal}, Sent=${smsSentLocal}`);
+        console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId}) | Plan: ${billingModel}`);
+        console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Limit=${isPayAsYouGo ? 'NO_LIMIT' : whatsappLimitLocal}, Sent=${whatsappSentLocal}`);
+        console.log(`[API Settings] SMS: Enabled=${isSmsEnabledLocal}, Limit=${isPayAsYouGo ? 'NO_LIMIT' : smsLimitLocal}, Sent=${smsSentLocal}`);
 
         for (const student of studentsList) {
           if (student.parentMobile) {
-            const canSendWhatsApp = isWhatsAppEnabledLocal && whatsappSentLocal < whatsappLimitLocal;
-            const canSendSms = isSmsEnabledLocal && smsSentLocal < smsLimitLocal;
+            // PAY_AS_YOU_GO bypasses limit checks entirely. FIXED checks sent < limit.
+            const canSendWhatsApp = isWhatsAppEnabledLocal && (isPayAsYouGo || whatsappSentLocal < whatsappLimitLocal);
+            const canSendSms = isSmsEnabledLocal && (isPayAsYouGo || smsSentLocal < smsLimitLocal);
 
             let wasWhatsAppSent = false;
             let wasSmsSent = false;

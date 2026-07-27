@@ -1,3 +1,15 @@
+export function isPayAsYouGoModel(data?: any): boolean {
+  if (!data) return false;
+  if (data.isPayAsYouGo === true || data.payAsYouGo === true || data.is_pay_as_you_go === true) {
+    return true;
+  }
+  const rawModel = data.billingModel || data.billing_model || data.plan || data.planType || data.subscriptionType || (typeof data === "string" ? data : "");
+  const modelStr = String(rawModel).trim().toUpperCase();
+  if (!modelStr) return false;
+  const clean = modelStr.replace(/[\s\-_]/g, '');
+  return clean === "PAYASYOUGO" || clean === "PAYPERUSE" || clean === "POSTPAID" || clean === "UNCAPPED";
+}
+
 export const formatGrade = (rawValue: string | undefined | null): string => {
   if (!rawValue) return "Grade 10"; // Default
   const matchNumbers = rawValue.match(/\d+/);

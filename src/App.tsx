@@ -26,13 +26,14 @@ import WhatsAppCenterView from "./components/WhatsAppCenterView";
 import ReportsSettingsView from "./components/ReportsSettingsView";
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, addDoc, deleteDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
-import { formatGrade, getInstallmentDueDates } from "./utils";
+import { formatGrade, getInstallmentDueDates, isPayAsYouGoModel } from "./utils";
 
 export default function App() {
   // Subscription states
   const [isSubscribed, setIsSubscribed] = useState<boolean>(true);
   const [subscriptionAlert, setSubscriptionAlert] = useState<string | null>(null);
   const [instituteData, setInstituteData] = useState<{
+    billingModel?: string;
     isWhatsAppEnabled?: boolean;
     isSmsEnabled?: boolean;
     whatsappLimit?: number;
@@ -285,21 +286,35 @@ export default function App() {
 
         // REAL-TIME CHECK: onSnapshot listener on /institutes/{instituteId}
         const instRef = doc(db, "institutes", user.uid);
-        unsubscribeInstitute = onSnapshot(instRef, (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            // Jaise hi status isSubscribed false ho, naya operations block ho jana chahiye
+        unsubscribeInstitute = onSnapshot(instRef, async (docSnap) => {
+          let data = docSnap.exists() ? docSnap.data() : null;
+
+          if (!data) {
+            try {
+              const userRef = doc(db, "users", user.uid);
+              const userSnap = await getDoc(userRef);
+              if (userSnap.exists()) {
+                data = userSnap.data();
+              }
+            } catch (e) {
+              console.error("Error fetching fallback user doc for institute settings:", e);
+            }
+          }
+
+          if (data) {
             const subStatus = data.isSubscribed !== false && data.status !== "expired" && data.status !== "inactive" && data.status !== "EXPIRED";
             setIsSubscribed(subStatus);
+            const payAsYouGoActive = isPayAsYouGoModel(data);
             setInstituteData({
-              isWhatsAppEnabled: data.isWhatsAppEnabled ?? false,
-              isSmsEnabled: data.isSmsEnabled ?? false,
-              whatsappLimit: Number(data.whatsappLimit ?? 0),
-              whatsappSent: Number(data.whatsappSent ?? 0),
-              whatsappLeft: Number(data.whatsappLeft ?? 0),
-              smsLimit: Number(data.smsLimit ?? 0),
-              smsSent: Number(data.smsSent ?? 0),
-              smsLeft: Number(data.smsLeft ?? 0)
+              billingModel: payAsYouGoActive ? "PAY_AS_YOU_GO" : (data.billingModel || data.billing_model || "FIXED"),
+              isWhatsAppEnabled: data.isWhatsAppEnabled ?? data.isWhatsappEnabled ?? true,
+              isSmsEnabled: data.isSmsEnabled ?? true,
+              whatsappLimit: Number(data.whatsappLimit ?? data.whatsapp_limit ?? 0),
+              whatsappSent: Number(data.whatsappSent ?? data.whatsapp_sent ?? 0),
+              whatsappLeft: payAsYouGoActive ? 999999 : Number(data.whatsappLeft ?? Math.max(0, Number(data.whatsappLimit ?? 0) - Number(data.whatsappSent ?? 0))),
+              smsLimit: Number(data.smsLimit ?? data.sms_limit ?? 0),
+              smsSent: Number(data.smsSent ?? data.sms_sent ?? 0),
+              smsLeft: payAsYouGoActive ? 999999 : Number(data.smsLeft ?? Math.max(0, Number(data.smsLimit ?? 0) - Number(data.smsSent ?? 0)))
             });
           } else {
             setIsSubscribed(true);
@@ -945,11 +960,12 @@ export default function App() {
       if (instSnap.exists() && targetStudents.length > 0) {
         const instData = instSnap.data();
         const count = targetStudents.length;
+        const isPayAsYouGo = isPayAsYouGoModel(instData);
 
         if (selectedMedium === "SMS") {
           const smsLimit = Number(instData.smsLimit ?? 0);
           const smsSent = Number(instData.smsSent ?? 0) + count;
-          const smsLeft = Math.max(0, smsLimit - smsSent);
+          const smsLeft = isPayAsYouGo ? 999999 : Math.max(0, smsLimit - smsSent);
           await updateDoc(instRef, {
             smsSent,
             smsLeft
@@ -957,7 +973,7 @@ export default function App() {
         } else {
           const whatsappLimit = Number(instData.whatsappLimit ?? 0);
           const whatsappSent = Number(instData.whatsappSent ?? 0) + count;
-          const whatsappLeft = Math.max(0, whatsappLimit - whatsappSent);
+          const whatsappLeft = isPayAsYouGo ? 999999 : Math.max(0, whatsappLimit - whatsappSent);
           await updateDoc(instRef, {
             whatsappSent,
             whatsappLeft
