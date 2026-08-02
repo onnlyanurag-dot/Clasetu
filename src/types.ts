@@ -102,7 +102,7 @@ export interface NotificationLog {
   recipientMobile: string;
   text: string;
   sentAt: string;
-  status: "Sent" | "Blocked";
+  status: "Sent" | "Blocked" | "Delivered" | "Failed" | string;
   medium?: "WhatsApp" | "SMS";
 }
 

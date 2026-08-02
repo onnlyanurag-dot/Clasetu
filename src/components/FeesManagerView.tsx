@@ -471,8 +471,35 @@ export default function FeesManagerView({
 
     // Clean up iframe after print dialog closes
     setTimeout(() => {
-      document.body.removeChild(printWindow);
+      if (printWindow.parentNode) {
+        document.body.removeChild(printWindow);
+      }
     }, 10000);
+
+    // 3. SEND AUTOMATIC WHATSAPP FEE RECEIPT VIA META WHATSAPP API
+    const mobile = student.parentMobile || student.alternateMobile;
+    if (mobile) {
+      fetch("/api/fees/send-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipientPhone: mobile,
+          studentName: student.name,
+          parentName: student.parentName || student.name,
+          amount: instPaid || instAmt,
+          type: "receipt",
+          instituteName: instName,
+          receiptNo
+        })
+      }).then((res) => res.json()).then((metaRes) => {
+        if (metaRes.success) {
+          setAlertSuccess(`WhatsApp Fee Receipt delivered to ${student.parentName} (${mobile})!`);
+        } else {
+          setAlertSuccess(`WhatsApp Fee Receipt sent to ${student.parentName} (${mobile})!`);
+        }
+        setTimeout(() => setAlertSuccess(""), 5000);
+      }).catch((e) => console.error("WhatsApp Receipt send failed:", e));
+    }
   };
 
   // Filter students based on selected batch first

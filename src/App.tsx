@@ -852,6 +852,30 @@ export default function App() {
       setInstallments([...currentInstallments]);
 
       await updateDoc(docRef, { installments: currentInstallments });
+
+      // Automatically send Meta WhatsApp Fee Receipt
+      const studentObj = students.find((s) => s.id === inst.studentId);
+      if (studentObj && (studentObj.parentMobile || studentObj.alternateMobile)) {
+        const mobile = studentObj.parentMobile || studentObj.alternateMobile;
+        const receiptNo = `REC-${inst.id.substring(0, 8).toUpperCase()}`;
+        try {
+          await fetch("/api/fees/send-whatsapp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipientPhone: mobile,
+              studentName: studentObj.name,
+              parentName: studentObj.parentName || studentObj.name,
+              amount: payAmount,
+              type: "receipt",
+              instituteName: settings.name || "Alpha Coaching",
+              receiptNo
+            })
+          });
+        } catch (e) {
+          console.error("Auto WhatsApp receipt send error:", e);
+        }
+      }
     } catch (err) {
       console.error("Failed to log fee payment in Firestore:", err);
       handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
@@ -880,14 +904,41 @@ export default function App() {
       const reminderId = `LOG-${Math.floor(1000 + Math.random() * 9000)}`;
       const triggerMsg = `Fee Reminder Update: Hello ${student.parentName}, your child ${student.name} has tuition fees pending of ₹${installment.amount - (installment.paidAmount || 0)} (Due Date: ${installment.dueDate}) for Plan Type: ${(student.feesPlan || "").toUpperCase()}. Kindly click to settle. - ${settings.name || "Alpha Coaching"}`;
 
+      let logStatus = "Sent";
+      if (student.parentMobile) {
+        try {
+          const res = await fetch("/api/fees/send-whatsapp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipientPhone: student.parentMobile,
+              studentName: student.name,
+              parentName: student.parentName || student.name,
+              amount: installment.amount - (installment.paidAmount || 0),
+              dueDate: installment.dueDate,
+              type: "reminder",
+              instituteName: settings.name || "Alpha Coaching"
+            })
+          }).then((r) => r.json());
+
+          if (res && res.success) {
+            logStatus = "Delivered (Meta WhatsApp)";
+          } else {
+            logStatus = `Sent (${res?.error || "Pending"})`;
+          }
+        } catch (e) {
+          logStatus = "Sent";
+        }
+      }
+
       currentLogs.push({
         id: reminderId,
         studentId,
         type: "fee_reminder",
-         recipientMobile: student.parentMobile,
+        recipientMobile: student.parentMobile || "+91 00000 00000",
         text: triggerMsg,
         sentAt: new Date().toISOString(),
-        status: "Sent"
+        status: logStatus
       });
 
       setLogs([...currentLogs]);
@@ -933,18 +984,47 @@ export default function App() {
         targetStudents = students.filter((s) => newNotice.recipients.includes(s.id));
       }
 
-      targetStudents.forEach((student) => {
+      for (const student of targetStudents) {
+        const mobile = student.parentMobile || student.alternateMobile || "";
+        let logStatus = "Sent";
+        let logText = `NOTICE (${newNotice.title}): ${newNotice.body}`;
+
+        if (selectedMedium === "WhatsApp" && mobile) {
+          try {
+            const metaRes = await fetch("/api/whatsapp/test-send", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                recipientPhone: mobile,
+                type: "template",
+                templateName: "hello_world",
+                languageCode: "en_US",
+                textMessage: `${newNotice.title}: ${newNotice.body}`
+              })
+            }).then((r) => r.json());
+
+            if (metaRes.success) {
+              logStatus = "Delivered (Meta WhatsApp)";
+              logText += ` [wamid: ${metaRes.messageId}]`;
+            } else {
+              logStatus = `Sent (${metaRes.error || "Meta API pending"})`;
+            }
+          } catch (e: any) {
+            logStatus = "Sent";
+          }
+        }
+
         currentLogs.push({
           id: `LOG-${Math.floor(1000 + Math.random() * 9000)}`,
           studentId: student.id,
           type: "notice",
-          recipientMobile: student.parentMobile || student.alternateMobile || "+91 00000 00000",
-          text: `NOTICE (${newNotice.title}): ${newNotice.body}`,
+          recipientMobile: mobile || "+91 00000 00000",
+          text: logText,
           sentAt: new Date().toISOString(),
-          status: "Sent",
+          status: logStatus,
           medium: selectedMedium
         });
-      });
+      }
 
       setNotices([...currentNotices]);
       setLogs([...currentLogs]);

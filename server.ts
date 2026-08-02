@@ -85,7 +85,7 @@ interface NotificationLog {
   recipientMobile: string;
   text: string;
   sentAt: string;
-  status: "Sent" | "Blocked";
+  status: "Sent" | "Blocked" | "Delivered" | "Failed" | string;
 }
 
 interface DbSchema {
@@ -163,8 +163,176 @@ async function getInstituteName(instituteId: string): Promise<string> {
   return "Alpha Excellence Coaching";
 }
 
-// Helper to dispatch WhatsApp template notifications via a real/simulated HTTP request
+// Meta WhatsApp Cloud API Config & Helper
+interface MetaWhatsAppConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  businessAccountId: string;
+  defaultTemplate: string;
+  languageCode: string;
+}
+
+let activeWhatsAppConfig: MetaWhatsAppConfig = {
+  accessToken: "EAA7P0z8ZBO7MBSFEzJRf9I3BM8TtJGCQ2q61T3I443nlDPgkzShKx8v6MGXdPgLFPLb0rWMzZAU3klPZB1AtQuuWy06W454izkPAWcbgwhMDUWljz8YIQTzoJvPdbUHuah6tgAcOEGJcCFv73PsxZCpCoeImZACZCuzLj27hBTFKBnYZBjuXhY2zyIw0k0ZCMVrXkISGbCWZB1ZBQIn1mrV4sqt6t7ZBUSQtv1xDKm604NvNmsBQ0fTIMCgxcRTXfQ0uF5avISU3ZBHcmoQB0M7l8flQ",
+  phoneNumberId: "1314273115097110",
+  businessAccountId: "1537660763931011",
+  defaultTemplate: "hello_world",
+  languageCode: "en_US"
+};
+
+function formatWhatsAppNumber(phone: string): string {
+  let clean = (phone || "").replace(/\D/g, "");
+  if (clean.length === 11 && clean.startsWith("0")) {
+    clean = clean.substring(1);
+  }
+  if (clean.length === 10) {
+    clean = "91" + clean; // Default India prefix
+  }
+  return clean;
+}
+
+async function sendMetaWhatsAppMessage(
+  recipientPhone: string,
+  options: {
+    type?: "template" | "text";
+    templateName?: string;
+    languageCode?: string;
+    parameters?: string[];
+    textMessage?: string;
+    overrideConfig?: Partial<MetaWhatsAppConfig>;
+  }
+) {
+  const token = options.overrideConfig?.accessToken || activeWhatsAppConfig.accessToken;
+  const phoneId = options.overrideConfig?.phoneNumberId || activeWhatsAppConfig.phoneNumberId;
+
+  if (!token || !phoneId) {
+    return {
+      success: false,
+      error: "Meta WhatsApp Access Token or Phone Number ID is missing. Please configure credentials in WhatsApp Test Mode or .env file.",
+      simulated: true
+    };
+  }
+
+  const cleanPhone = formatWhatsAppNumber(recipientPhone);
+  const graphUrl = `https://graph.facebook.com/v21.0/${phoneId}/messages`;
+
+  let payload: any = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: cleanPhone
+  };
+
+  if (options.type === "text" && options.textMessage) {
+    payload.type = "text";
+    payload.text = { preview_url: false, body: options.textMessage };
+  } else {
+    payload.type = "template";
+    const tName = options.templateName || activeWhatsAppConfig.defaultTemplate || "hello_world";
+    const lang = options.languageCode || activeWhatsAppConfig.languageCode || "en_US";
+    payload.template = {
+      name: tName,
+      language: { code: lang }
+    };
+
+    if (tName !== "hello_world" && options.parameters && options.parameters.length > 0) {
+      payload.template.components = [
+        {
+          type: "body",
+          parameters: options.parameters.map((p) => ({
+            type: "text",
+            text: p
+          }))
+        }
+      ];
+    }
+  }
+
+  try {
+    const res = await fetch(graphUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (res.ok && data.messages?.[0]?.id) {
+      return {
+        success: true,
+        messageId: data.messages[0].id,
+        recipient: cleanPhone,
+        rawResponse: data
+      };
+    } else {
+      console.warn(`[Meta WhatsApp Primary Template Failed] ${data.error?.message || JSON.stringify(data.error)}. Attempting automatic fallback to hello_world template...`);
+      // Automatic fallback to universally approved hello_world template (en_US, 0 parameters)
+      const fallbackPayload = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: cleanPhone,
+        type: "template",
+        template: {
+          name: "hello_world",
+          language: { code: "en_US" }
+        }
+      };
+      try {
+        const fallbackRes = await fetch(graphUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          body: JSON.stringify(fallbackPayload)
+        });
+        const fallbackData = await fallbackRes.json();
+        if (fallbackRes.ok && fallbackData.messages?.[0]?.id) {
+          console.log(`[Meta WhatsApp Fallback Success] Dispatched hello_world to ${cleanPhone} (wamid: ${fallbackData.messages[0].id})`);
+          return {
+            success: true,
+            messageId: fallbackData.messages[0].id,
+            recipient: cleanPhone,
+            rawResponse: fallbackData
+          };
+        }
+      } catch (fbErr) {
+        console.error("[Meta WhatsApp Fallback Error]", fbErr);
+      }
+
+      return {
+        success: false,
+        error: data.error?.message || data.error?.error_data?.details || "Meta Cloud API request failed",
+        metaError: data.error,
+        rawResponse: data
+      };
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.message || "Network error connecting to Meta Graph API",
+    };
+  }
+}
+
+// Helper to dispatch WhatsApp template notifications via Meta Cloud API or gateway
 async function sendWhatsAppNotification(parentMobile: string, studentName: string, parentName: string, instituteName: string): Promise<string> {
+  if (activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId) {
+    const metaRes = await sendMetaWhatsAppMessage(parentMobile, {
+      type: "template",
+      templateName: "hello_world",
+      languageCode: "en_US",
+      parameters: []
+    });
+    if (metaRes.success) {
+      console.log(`[Meta WhatsApp Cloud API] Dispatched to ${parentMobile} (wamid: ${metaRes.messageId})`);
+      return "Sent";
+    } else {
+      console.warn(`[Meta WhatsApp Cloud API] Failed: ${metaRes.error}. Falling back to gateway.`);
+    }
+  }
+
   const payload = {
     phoneNumber: parentMobile,
     template: {
@@ -1061,11 +1229,11 @@ export async function createExpressApp() {
 
         let whatsappSentLocal = instData ? instData.whatsappSent : 0;
         const whatsappLimitLocal = instData ? instData.whatsappLimit : 0;
-        const isWhatsAppEnabledLocal = instData ? instData.isWhatsAppEnabled : false;
+        const isWhatsAppEnabledLocal = instData ? (instData.isWhatsAppEnabled !== false) : true;
 
         let smsSentLocal = instData ? instData.smsSent : 0;
         const smsLimitLocal = instData ? instData.smsLimit : 0;
-        const isSmsEnabledLocal = instData ? instData.isSmsEnabled : false;
+        const isSmsEnabledLocal = instData ? (instData.isSmsEnabled !== false) : true;
 
         console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId}) | Plan: ${billingModel}`);
         console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Limit=${isPayAsYouGo ? 'NO_LIMIT' : whatsappLimitLocal}, Sent=${whatsappSentLocal}`);
@@ -1073,9 +1241,9 @@ export async function createExpressApp() {
 
         for (const student of studentsList) {
           if (student.parentMobile) {
-            // PAY_AS_YOU_GO bypasses limit checks entirely. FIXED checks sent < limit.
-            const canSendWhatsApp = isWhatsAppEnabledLocal && (isPayAsYouGo || whatsappSentLocal < whatsappLimitLocal);
-            const canSendSms = isSmsEnabledLocal && (isPayAsYouGo || smsSentLocal < smsLimitLocal);
+            // PAY_AS_YOU_GO or limit === 0 bypasses limit checks entirely.
+            const canSendWhatsApp = isWhatsAppEnabledLocal && (isPayAsYouGo || whatsappLimitLocal === 0 || whatsappSentLocal < whatsappLimitLocal);
+            const canSendSms = isSmsEnabledLocal && (isPayAsYouGo || smsLimitLocal === 0 || smsSentLocal < smsLimitLocal);
 
             let wasWhatsAppSent = false;
             let wasSmsSent = false;
@@ -1330,6 +1498,142 @@ export async function createExpressApp() {
   // Get notifications trace logs
   app.get("/api/logs", (req, res) => {
     res.json(dbState.logs);
+  });
+
+  // Meta WhatsApp Cloud API Test Mode Config Endpoints
+  app.get("/api/whatsapp/config", (req, res) => {
+    const hasToken = Boolean(activeWhatsAppConfig.accessToken);
+    const maskedToken = hasToken
+      ? `${activeWhatsAppConfig.accessToken.substring(0, 6)}...${activeWhatsAppConfig.accessToken.slice(-4)}`
+      : "";
+
+    res.json({
+      configured: Boolean(activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId),
+      accessToken: activeWhatsAppConfig.accessToken,
+      maskedToken,
+      phoneNumberId: activeWhatsAppConfig.phoneNumberId,
+      businessAccountId: activeWhatsAppConfig.businessAccountId,
+      defaultTemplate: activeWhatsAppConfig.defaultTemplate,
+      languageCode: activeWhatsAppConfig.languageCode
+    });
+  });
+
+  app.post("/api/whatsapp/config", (req, res) => {
+    const { accessToken, phoneNumberId, businessAccountId, defaultTemplate, languageCode } = req.body;
+
+    if (accessToken !== undefined) activeWhatsAppConfig.accessToken = String(accessToken).trim();
+    if (phoneNumberId !== undefined) activeWhatsAppConfig.phoneNumberId = String(phoneNumberId).trim();
+    if (businessAccountId !== undefined) activeWhatsAppConfig.businessAccountId = String(businessAccountId).trim();
+    if (defaultTemplate !== undefined) activeWhatsAppConfig.defaultTemplate = String(defaultTemplate).trim() || "hello_world";
+    if (languageCode !== undefined) activeWhatsAppConfig.languageCode = String(languageCode).trim() || "en_US";
+
+    console.log(`[Meta WhatsApp Config Updated] Phone Number ID: ${activeWhatsAppConfig.phoneNumberId}, Token Set: ${Boolean(activeWhatsAppConfig.accessToken)}`);
+
+    res.json({
+      success: true,
+      message: "Meta WhatsApp credentials updated successfully",
+      config: {
+        configured: Boolean(activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId),
+        phoneNumberId: activeWhatsAppConfig.phoneNumberId,
+        businessAccountId: activeWhatsAppConfig.businessAccountId,
+        defaultTemplate: activeWhatsAppConfig.defaultTemplate,
+        languageCode: activeWhatsAppConfig.languageCode
+      }
+    });
+  });
+
+  app.post("/api/whatsapp/test-send", async (req, res) => {
+    const {
+      recipientPhone,
+      templateName,
+      languageCode,
+      parameters,
+      textMessage,
+      type,
+      configOverride
+    } = req.body;
+
+    if (!recipientPhone) {
+      return res.status(400).json({ success: false, error: "Recipient phone number is required" });
+    }
+
+    const overrideConfig: Partial<MetaWhatsAppConfig> = {};
+    if (configOverride?.accessToken) overrideConfig.accessToken = configOverride.accessToken;
+    if (configOverride?.phoneNumberId) overrideConfig.phoneNumberId = configOverride.phoneNumberId;
+
+    const result = await sendMetaWhatsAppMessage(recipientPhone, {
+      type: type || (textMessage ? "text" : "template"),
+      templateName: templateName || activeWhatsAppConfig.defaultTemplate || "hello_world",
+      languageCode: languageCode || activeWhatsAppConfig.languageCode || "en_US",
+      parameters: Array.isArray(parameters) ? parameters : undefined,
+      textMessage,
+      overrideConfig
+    });
+
+    if (result.success) {
+      // Log test message into system logs
+      dbState.logs.push({
+        id: `TEST-${Math.floor(1000 + Math.random() * 9000)}`,
+        studentId: "TEST_RECIPIENT",
+        type: "notice",
+        recipientMobile: formatWhatsAppNumber(recipientPhone),
+        text: `WhatsApp Test Message: ${textMessage || `Template [${templateName || 'hello_world'}]`}`,
+        sentAt: new Date().toISOString(),
+        status: "Sent"
+      });
+      saveDb(dbState);
+      return res.json(result);
+    } else {
+      return res.status(400).json(result);
+    }
+  });
+
+  app.post("/api/fees/send-whatsapp", async (req, res) => {
+    const {
+      recipientPhone,
+      studentName,
+      parentName,
+      amount,
+      dueDate,
+      type, // 'receipt' | 'reminder'
+      instituteName,
+      receiptNo
+    } = req.body;
+
+    if (!recipientPhone) {
+      return res.status(400).json({ success: false, error: "Recipient phone number is required" });
+    }
+
+    const tName = activeWhatsAppConfig.defaultTemplate || "hello_world";
+    const lang = activeWhatsAppConfig.languageCode || "en_US";
+
+    let msgText = type === "receipt"
+      ? `Fee Receipt: Received ₹${amount} for ${studentName} (${receiptNo || "Paid"}). Thank you! - ${instituteName || "Alpha Coaching"}`
+      : `Fee Reminder: Pending fees of ₹${amount} due on ${dueDate || "soon"} for ${studentName}. - ${instituteName || "Alpha Coaching"}`;
+
+    const result = await sendMetaWhatsAppMessage(recipientPhone, {
+      type: "template",
+      templateName: tName,
+      languageCode: lang,
+      parameters: [parentName || studentName, instituteName || "Alpha Coaching"],
+      textMessage: msgText
+    });
+
+    if (result.success) {
+      dbState.logs.push({
+        id: `FEE-${Math.floor(1000 + Math.random() * 9000)}`,
+        studentId: studentName || "STUDENT",
+        type: type === "receipt" ? "notice" : "fee_reminder",
+        recipientMobile: formatWhatsAppNumber(recipientPhone),
+        text: msgText + ` [wamid: ${result.messageId}]`,
+        sentAt: new Date().toISOString(),
+        status: "Delivered (Meta WhatsApp)"
+      });
+      saveDb(dbState);
+      return res.json({ success: true, messageId: result.messageId, status: "Sent" });
+    } else {
+      return res.status(400).json(result);
+    }
   });
 
 

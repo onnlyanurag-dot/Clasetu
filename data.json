@@ -1,0 +1,453 @@
+{
+  "settings": {
+    "name": "Alpha Excellence Coaching",
+    "logo": "🎓",
+    "address": "Suite 402, EduTower Building, Knowledge Park, Metro City",
+    "contact": "+91 98765 43210"
+  },
+  "adminUsers": [
+    {
+      "email": "adzentive@gmail.com",
+      "passwordHash": "password123"
+    },
+    {
+      "email": "admin@classsetu.com",
+      "passwordHash": "admin123"
+    }
+  ],
+  "batches": [
+    {
+      "id": "BTCH-001",
+      "name": "Elite Morning Advanced",
+      "startTime": "07:00 AM",
+      "endTime": "08:30 AM",
+      "capacity": 10,
+      "days": [
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri"
+      ]
+    },
+    {
+      "id": "BTCH-002",
+      "name": "Afternoon Prime Foundation",
+      "startTime": "03:00 PM",
+      "endTime": "04:30 PM",
+      "capacity": 15,
+      "days": [
+        "Mon",
+        "Wed",
+        "Fri"
+      ]
+    },
+    {
+      "id": "BTCH-003",
+      "name": "Late Evening Masters",
+      "startTime": "05:00 PM",
+      "endTime": "06:30 PM",
+      "capacity": 12,
+      "days": [
+        "Mon",
+        "Tue",
+        "Thu",
+        "Fri"
+      ]
+    }
+  ],
+  "students": [
+    {
+      "id": "STD-2026-X8K92P",
+      "name": "Aarav Sharma",
+      "parentName": "Rajesh Sharma",
+      "parentMobile": "+91 99112 23344",
+      "alternateMobile": "+91 99112 23345",
+      "class": "Grade 10",
+      "schoolName": "St. Xavier's International School",
+      "schoolTiming": "08:00 AM - 02:00 PM",
+      "preferredTuitionTiming": "03:00 PM - 05:00 PM",
+      "reasonForPreferredTiming": "Travels directly from school to tuition to save transit time.",
+      "subjects": [
+        "Mathematics",
+        "Physics"
+      ],
+      "admissionDate": "2026-04-10",
+      "feesAmount": 16000,
+      "feesPlan": "quarterly",
+      "batchId": "BTCH-002",
+      "status": "active"
+    },
+    {
+      "id": "STD-2026-M4V8W1",
+      "name": "Diya Patel",
+      "parentName": "Mahendra Patel",
+      "parentMobile": "+91 98223 34455",
+      "alternateMobile": "",
+      "class": "Grade 11",
+      "schoolName": "DP Star Secondary School",
+      "schoolTiming": "07:30 AM - 01:30 PM",
+      "preferredTuitionTiming": "03:00 PM - 05:00 PM",
+      "reasonForPreferredTiming": "Has sports training at 5:30 PM every alternate day.",
+      "subjects": [
+        "Chemistry",
+        "Physics"
+      ],
+      "admissionDate": "2026-04-12",
+      "feesAmount": 18000,
+      "feesPlan": "half-yearly",
+      "batchId": "BTCH-002",
+      "status": "active"
+    },
+    {
+      "id": "STD-2026-P3Q9R7",
+      "name": "Kabir Mehta",
+      "parentName": "Sanjay Mehta",
+      "parentMobile": "+91 97334 45566",
+      "alternateMobile": "+91 97334 45567",
+      "class": "Grade 12",
+      "schoolName": "Delhi Public School",
+      "schoolTiming": "08:00 AM - 02:30 PM",
+      "preferredTuitionTiming": "05:00 PM - 07:00 PM",
+      "reasonForPreferredTiming": "Late school bus dropoff, cannot join early batch.",
+      "subjects": [
+        "Mathematics",
+        "Physics",
+        "Chemistry"
+      ],
+      "admissionDate": "2026-04-15",
+      "feesAmount": 24000,
+      "feesPlan": "quarterly",
+      "batchId": "BTCH-003",
+      "status": "active"
+    },
+    {
+      "id": "STD-2026-T9Y8U5",
+      "name": "Rohan Das",
+      "parentName": "Amit Das",
+      "parentMobile": "+91 96445 56677",
+      "alternateMobile": "",
+      "class": "Grade 10",
+      "schoolName": "Modern School",
+      "schoolTiming": "08:30 AM - 03:00 PM",
+      "preferredTuitionTiming": "05:00 PM - 07:00 PM",
+      "reasonForPreferredTiming": "Late school dispersal times.",
+      "subjects": [
+        "Mathematics"
+      ],
+      "admissionDate": "2026-04-18",
+      "feesAmount": 12000,
+      "feesPlan": "quarterly",
+      "batchId": null,
+      "status": "active"
+    },
+    {
+      "id": "STD-2026-K1J2B3",
+      "name": "Ananya Iyer",
+      "parentName": "Raman Iyer",
+      "parentMobile": "+91 95556 67788",
+      "alternateMobile": "+91 95556 67789",
+      "class": "Grade 12 (JEE)",
+      "schoolName": "National Science Academy",
+      "schoolTiming": "07:00 AM - 12:30 PM",
+      "preferredTuitionTiming": "07:00 AM - 09:00 AM",
+      "reasonForPreferredTiming": "Pre-school slot or self-study timing matches.",
+      "subjects": [
+        "Physics",
+        "Mathematics"
+      ],
+      "admissionDate": "2026-04-05",
+      "feesAmount": 30000,
+      "feesPlan": "half-yearly",
+      "batchId": "BTCH-001",
+      "status": "active"
+    }
+  ],
+  "attendance": [
+    {
+      "date": "2026-06-09",
+      "studentId": "STD-2026-X8K92P",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-09",
+      "studentId": "STD-2026-M4V8W1",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-09",
+      "studentId": "STD-2026-P3Q9R7",
+      "status": "Absent"
+    },
+    {
+      "date": "2026-06-09",
+      "studentId": "STD-2026-K1J2B3",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-10",
+      "studentId": "STD-2026-X8K92P",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-10",
+      "studentId": "STD-2026-M4V8W1",
+      "status": "Absent"
+    },
+    {
+      "date": "2026-06-10",
+      "studentId": "STD-2026-P3Q9R7",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-10",
+      "studentId": "STD-2026-K1J2B3",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-11",
+      "studentId": "STD-2026-X8K92P",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-11",
+      "studentId": "STD-2026-M4V8W1",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-11",
+      "studentId": "STD-2026-P3Q9R7",
+      "status": "Present"
+    },
+    {
+      "date": "2026-06-11",
+      "studentId": "STD-2026-K1J2B3",
+      "status": "Present"
+    },
+    {
+      "date": "2026-08-02",
+      "studentId": "S101",
+      "status": "Absent"
+    }
+  ],
+  "installments": [
+    {
+      "id": "INST-1",
+      "studentId": "STD-2026-X8K92P",
+      "installmentNumber": 1,
+      "amount": 4000,
+      "dueDate": "2026-04-15",
+      "status": "Paid",
+      "paidAmount": 4000,
+      "paymentDate": "2026-04-14"
+    },
+    {
+      "id": "INST-2",
+      "studentId": "STD-2026-X8K92P",
+      "installmentNumber": 2,
+      "amount": 4000,
+      "dueDate": "2026-07-15",
+      "status": "Paid",
+      "paidAmount": 4000,
+      "paymentDate": "2026-06-05"
+    },
+    {
+      "id": "INST-3",
+      "studentId": "STD-2026-X8K92P",
+      "installmentNumber": 3,
+      "amount": 4000,
+      "dueDate": "2026-10-15",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-4",
+      "studentId": "STD-2026-X8K92P",
+      "installmentNumber": 4,
+      "amount": 4000,
+      "dueDate": "2027-01-15",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-5",
+      "studentId": "STD-2026-M4V8W1",
+      "installmentNumber": 1,
+      "amount": 9000,
+      "dueDate": "2026-04-15",
+      "status": "Paid",
+      "paidAmount": 9000,
+      "paymentDate": "2026-04-12"
+    },
+    {
+      "id": "INST-6",
+      "studentId": "STD-2026-M4V8W1",
+      "installmentNumber": 2,
+      "amount": 9000,
+      "dueDate": "2026-10-15",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-7",
+      "studentId": "STD-2026-P3Q9R7",
+      "installmentNumber": 1,
+      "amount": 6000,
+      "dueDate": "2026-04-15",
+      "status": "Paid",
+      "paidAmount": 6000,
+      "paymentDate": "2026-04-15"
+    },
+    {
+      "id": "INST-8",
+      "studentId": "STD-2026-P3Q9R7",
+      "installmentNumber": 2,
+      "amount": 6000,
+      "dueDate": "2026-07-15",
+      "status": "Partially Paid",
+      "paidAmount": 3000,
+      "paymentDate": "2026-06-01"
+    },
+    {
+      "id": "INST-9",
+      "studentId": "STD-2026-P3Q9R7",
+      "installmentNumber": 3,
+      "amount": 6000,
+      "dueDate": "2026-10-15",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-10",
+      "studentId": "STD-2026-P3Q9R7",
+      "installmentNumber": 4,
+      "amount": 6000,
+      "dueDate": "2027-01-15",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-11",
+      "studentId": "STD-2026-T9Y8U5",
+      "installmentNumber": 1,
+      "amount": 3000,
+      "dueDate": "2026-04-20",
+      "status": "Paid",
+      "paidAmount": 3000,
+      "paymentDate": "2026-04-20"
+    },
+    {
+      "id": "INST-12",
+      "studentId": "STD-2026-T9Y8U5",
+      "installmentNumber": 2,
+      "amount": 3000,
+      "dueDate": "2026-07-20",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-13",
+      "studentId": "STD-2026-T9Y8U5",
+      "installmentNumber": 3,
+      "amount": 3000,
+      "dueDate": "2026-10-20",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-14",
+      "studentId": "STD-2026-T9Y8U5",
+      "installmentNumber": 4,
+      "amount": 3000,
+      "dueDate": "2027-01-20",
+      "status": "Unpaid",
+      "paidAmount": 0
+    },
+    {
+      "id": "INST-15",
+      "studentId": "STD-2026-K1J2B3",
+      "installmentNumber": 1,
+      "amount": 15000,
+      "dueDate": "2026-04-10",
+      "status": "Paid",
+      "paidAmount": 15000,
+      "paymentDate": "2026-04-09"
+    },
+    {
+      "id": "INST-16",
+      "studentId": "STD-2026-K1J2B3",
+      "installmentNumber": 2,
+      "amount": 15000,
+      "dueDate": "2026-10-10",
+      "status": "Unpaid",
+      "paidAmount": 0
+    }
+  ],
+  "notices": [
+    {
+      "id": "NTC-001",
+      "title": "Summer Term Break Announcement",
+      "body": "Dear Parents and Students, ClassSetu will remain closed from June 15 to June 18 for summer break. Daily assignments are uploaded in standard portals. Regular batches will resume normal timings from June 19 onwards.",
+      "recipientType": "All Students",
+      "recipients": [],
+      "sentAt": "2026-06-10T10:00:00.000Z",
+      "status": "Delivered"
+    }
+  ],
+  "logs": [
+    {
+      "id": "LOG-001",
+      "studentId": "STD-2026-P3Q9R7",
+      "type": "absent_alert",
+      "recipientMobile": "+91 97334 45566",
+      "text": "Absence Alert: Dear Parent, Kabir Mehta was marked ABSENT today (2026-06-09) at Alpha Excellence Coaching. Please contact support.",
+      "sentAt": "2026-06-09T18:30:00.000Z",
+      "status": "Sent"
+    },
+    {
+      "id": "LOG-002",
+      "studentId": "STD-2026-P3Q9R7",
+      "type": "fee_reminder",
+      "recipientMobile": "+91 97334 45566",
+      "text": "Fee Due Alert: Hello Sanjay Mehta, Kabir Mehta has a pending fee installment of ₹3000 due. Please settle by the due date of 2026-07-15 to avoid interruption in active tuition batches.",
+      "sentAt": "2026-06-11T09:12:00.000Z",
+      "status": "Sent"
+    },
+    {
+      "id": "TEST-6574",
+      "studentId": "TEST_RECIPIENT",
+      "type": "notice",
+      "recipientMobile": "918485903778",
+      "text": "WhatsApp Test Message: Template [hello_world]",
+      "sentAt": "2026-07-30T08:57:32.584Z",
+      "status": "Sent"
+    },
+    {
+      "id": "FEE-1302",
+      "studentId": "Aanya Sharma",
+      "type": "notice",
+      "recipientMobile": "918485903778",
+      "text": "Fee Receipt: Received ₹4000 for Aanya Sharma (REC-TEST001). Thank you! - Alpha Coaching [wamid: wamid.HBgMOTE4NDg1OTAzNzc4FQIAERgSRTVGRDIxN0E2ODYwMjcwM0RCAA==]",
+      "sentAt": "2026-08-02T09:56:02.982Z",
+      "status": "Delivered (Meta WhatsApp)"
+    },
+    {
+      "id": "TEST-7870",
+      "studentId": "TEST_RECIPIENT",
+      "type": "notice",
+      "recipientMobile": "918485903778",
+      "text": "WhatsApp Test Message: Template [hello_world]",
+      "sentAt": "2026-08-02T09:56:07.262Z",
+      "status": "Sent"
+    },
+    {
+      "id": "FEE-1982",
+      "studentId": "Aanya Sharma",
+      "type": "notice",
+      "recipientMobile": "918485903778",
+      "text": "Fee Receipt: Received ₹4000 for Aanya Sharma (REC-TEST001). Thank you! - Alpha Coaching [wamid: wamid.HBgMOTE4NDg1OTAzNzc4FQIAERgSQTdENkM5MUIwQUYxN0UyRDU1AA==]",
+      "sentAt": "2026-08-02T10:20:03.952Z",
+      "status": "Delivered (Meta WhatsApp)"
+    }
+  ]
+}
