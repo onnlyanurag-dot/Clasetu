@@ -173,7 +173,7 @@ interface MetaWhatsAppConfig {
 }
 
 let activeWhatsAppConfig: MetaWhatsAppConfig = {
-  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || "EAA7P0z8ZBO7MBSFEzJRf9I3BM8TtJGCQ2q61T3I443nlDPgkzShKx8v6MGXdPgLFPLb0rWMzZAU3klPZB1AtQuuWy06W454izkPAWcbgwhMDUWljz8YIQTzoJvPdbUHuah6tgAcOEGJcCFv73PsxZCpCoeImZACZCuzLj27hBTFKBnYZBjuXhY2zyIw0k0ZCMVrXkISGbCWZB1ZBQIn1mrV4sqt6t7ZBUSQtv1xDKm604NvNmsBQ0fTIMCgxcRTXfQ0uF5avISU3ZBHcmoQB0M7l8flQ",
+  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || "YOUR_NEW_TEMPORARY_ACCESS_TOKEN",
   phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "1314273115097110",
   businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "1537660763931011",
   defaultTemplate: process.env.WHATSAPP_DEFAULT_TEMPLATE || "hello_world",

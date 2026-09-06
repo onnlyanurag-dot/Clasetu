@@ -58,10 +58,10 @@ export default function BatchAttendanceView({
   const [bTargetClass, setBTargetClass] = useState("Grade 10");
   const [isGradeDropdownOpen, setIsGradeDropdownOpen] = useState(false);
 
-  // Background scroll lock effect when modal or overlay is open
+  // Background scroll lock effect when any modal is open
   useEffect(() => {
-    const isAnyModalOpen = isAddBatchOpen || !!deleteConfirmBatchId;
-    if (isAnyModalOpen) {
+    const isModalActive = isAddBatchOpen || !!editingBatchId || !!deleteConfirmBatchId;
+    if (isModalActive) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -69,7 +69,7 @@ export default function BatchAttendanceView({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isAddBatchOpen, deleteConfirmBatchId]);
+  }, [isAddBatchOpen, editingBatchId, deleteConfirmBatchId]);
 
   const availableGrades = [
     "Grade 1",
@@ -92,19 +92,6 @@ export default function BatchAttendanceView({
   ];
 
   const weekDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-  // Background scroll lock effect when any batch modal is open
-  React.useEffect(() => {
-    const isModalActive = isAddBatchOpen || !!editingBatchId || !!deleteConfirmBatchId;
-    if (isModalActive) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isAddBatchOpen, editingBatchId, deleteConfirmBatchId]);
 
   const handleToggleDay = (day: string) => {
     setBDays((prev) => 
@@ -360,13 +347,13 @@ export default function BatchAttendanceView({
         <div 
           className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setIsAddBatchOpen(false);
+            if (e.target === e.currentTarget) { setIsAddBatchOpen(false); setEditingBatchId(null); }
           }}
         >
           <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-md max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden transform scale-100 transition-all animate-fade-in touch-auto select-text">
             <div className="bg-emerald-gradient p-5 text-white flex justify-between items-center shrink-0">
               <h3 className="font-display text-lg font-bold">Define Batch TIMING Schedule</h3>
-              <button onClick={() => setIsAddBatchOpen(false)} className="text-emerald-100 hover:text-white cursor-pointer">
+              <button onClick={() => { setIsAddBatchOpen(false); setEditingBatchId(null); }} className="text-emerald-100 hover:text-white cursor-pointer">
                 <X className="w-6 h-6" />
               </button>
             </div>
