@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   CheckCircle2, 
   X, 
@@ -57,6 +57,19 @@ export default function BatchAttendanceView({
   const [bTeachers, setBTeachers] = useState<string[]>([]);
   const [bTargetClass, setBTargetClass] = useState("Grade 10");
   const [isGradeDropdownOpen, setIsGradeDropdownOpen] = useState(false);
+
+  // Background scroll lock effect when modal or overlay is open
+  useEffect(() => {
+    const isAnyModalOpen = isAddBatchOpen || !!deleteConfirmBatchId;
+    if (isAnyModalOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isAddBatchOpen, deleteConfirmBatchId]);
 
   const availableGrades = [
     "Grade 1",
@@ -344,59 +357,165 @@ export default function BatchAttendanceView({
 
       {/* --- DEFINE BATCH FORM TIMING SLOTS MODAL --- */}
       {isAddBatchOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-md overflow-hidden transform scale-100 transition-all">
-            <div className="bg-emerald-gradient p-5 text-white flex justify-between items-center">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddBatchOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-md max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden transform scale-100 transition-all animate-fade-in touch-auto select-text">
+            <div className="bg-emerald-gradient p-5 text-white flex justify-between items-center shrink-0">
               <h3 className="font-display text-lg font-bold">Define Batch TIMING Schedule</h3>
-              <button onClick={() => setIsAddBatchOpen(false)} className="text-emerald-100 hover:text-white">
+              <button onClick={() => setIsAddBatchOpen(false)} className="text-emerald-100 hover:text-white cursor-pointer">
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateBatchSubmit} className="p-6 space-y-4 text-slate-800">
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Batch Name</label>
-                <input 
-                  type="text"
-                  required
-                  placeholder="e.g. Grade 10 Star Morning Batch"
-                  value={bName}
-                  onChange={(e) => setBName(e.target.value)}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-semibold"
-                />
-              </div>
+            <form onSubmit={handleCreateBatchSubmit} className="flex-1 flex flex-col overflow-hidden min-h-0">
+              <div className="p-6 space-y-4 text-slate-800 overflow-y-auto overscroll-contain flex-1">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Batch Name</label>
+                  <input 
+                    type="text"
+                    required
+                    placeholder="e.g. Grade 10 Star Morning Batch"
+                    value={bName}
+                    onChange={(e) => setBName(e.target.value)}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-semibold"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Select Grade</label>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setIsGradeDropdownOpen(!isGradeDropdownOpen)}
-                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-semibold flex items-center justify-between cursor-pointer"
-                  >
-                    <span>{bTargetClass || "Select Grade"}</span>
-                    <ChevronDown className="w-4 h-4 text-slate-400" />
-                  </button>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Select Grade</label>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsGradeDropdownOpen(!isGradeDropdownOpen)}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-semibold flex items-center justify-between cursor-pointer"
+                    >
+                      <span>{bTargetClass || "Select Grade"}</span>
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    </button>
+                    
+                    {isGradeDropdownOpen && (
+                      <div className="absolute left-0 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto py-1 divide-y divide-slate-50">
+                        {availableGrades.map((cl) => {
+                          const isSelected = bTargetClass === cl;
+                          return (
+                            <button
+                              key={cl}
+                              type="button"
+                              onClick={() => {
+                                setBTargetClass(cl);
+                                setIsGradeDropdownOpen(false);
+                              }}
+                              className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                                isSelected ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                              }`}
+                            >
+                              <span>{cl}</span>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <TimeInput
+                    label="Start Time"
+                    value={bStart}
+                    onChange={setBStart}
+                  />
+                  <TimeInput
+                    label="End Time"
+                    value={bEnd}
+                    onChange={setBEnd}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Preferred Capacity Limit</label>
+                  <input 
+                    type="number"
+                    required
+                    value={bCapacity}
+                    onChange={(e) => setBCapacity(Number(e.target.value))}
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-bold font-mono text-center"
+                  />
+                </div>
+
+                {/* Days choice */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Lecture Schedule Days</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {weekDays.map((day) => {
+                      const isSelected = bDays.includes(day);
+                      return (
+                        <button
+                          type="button"
+                          key={day}
+                          onClick={() => handleToggleDay(day)}
+                          className={`text-xs font-bold tracking-wider px-2.5 py-1.5 rounded-lg border transition-all ${
+                            isSelected 
+                              ? "bg-slate-900 border-slate-900 text-white" 
+                              : "bg-slate-50 border-slate-250 text-slate-500"
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Assigned Teachers selection */}
+                <div>
+                  <div className="flex justify-between items-center mb-1.5 animate-fade-in">
+                    <label className="block text-xs font-bold text-slate-500 uppercase">Assigned Teachers</label>
+                    {teachers.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allSelected = bTeachers.length === teachers.length;
+                          setBTeachers(allSelected ? [] : teachers.map(t => t.id));
+                        }}
+                        className="text-[10px] text-emerald-600 font-extrabold hover:underline"
+                      >
+                        {bTeachers.length === teachers.length ? "Deselect All" : "Select All Teachers"}
+                      </button>
+                    )}
+                  </div>
                   
-                  {isGradeDropdownOpen && (
-                    <div className="absolute left-0 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto py-1 divide-y divide-slate-50">
-                      {availableGrades.map((cl) => {
-                        const isSelected = bTargetClass === cl;
+                  {teachers.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic bg-slate-50 p-3 rounded-xl border border-slate-100">
+                      No active registered teachers found in system. Create accounts in Settings Desk tab first!
+                    </p>
+                  ) : (
+                    <div className="max-h-[120px] overflow-y-auto overscroll-contain border border-slate-250/70 rounded-xl p-3 bg-slate-50 space-y-2">
+                      {teachers.map((t) => {
+                        const isChecked = bTeachers.includes(t.id);
                         return (
-                          <button
-                            key={cl}
-                            type="button"
-                            onClick={() => {
-                              setBTargetClass(cl);
-                              setIsGradeDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                              isSelected ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
-                            }`}
-                          >
-                            <span>{cl}</span>
-                            {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
-                          </button>
+                          <label key={t.id} className="flex items-center gap-2.5 p-1.5 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors text-xs font-semibold text-slate-700 select-none">
+                            <input 
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {
+                                setBTeachers(prev => 
+                                  prev.includes(t.id) 
+                                    ? prev.filter(id => id !== t.id) 
+                                    : [...prev, t.id]
+                                );
+                              }}
+                              className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
+                            />
+                            <div>
+                              <span className="font-bold text-slate-800 block leading-tight">{t.name}</span>
+                              <span className="text-[9px] text-slate-400 font-mono">{t.email}</span>
+                            </div>
+                          </label>
                         );
                       })}
                     </div>
@@ -404,106 +523,8 @@ export default function BatchAttendanceView({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <TimeInput
-                  label="Start Time"
-                  value={bStart}
-                  onChange={setBStart}
-                />
-                <TimeInput
-                  label="End Time"
-                  value={bEnd}
-                  onChange={setBEnd}
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Preferred Capacity Limit</label>
-                <input 
-                  type="number"
-                  required
-                  value={bCapacity}
-                  onChange={(e) => setBCapacity(Number(e.target.value))}
-                  className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-bold font-mono text-center"
-                />
-              </div>
-
-              {/* Days choice */}
-              <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Lecture Schedule Days</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {weekDays.map((day) => {
-                    const isSelected = bDays.includes(day);
-                    return (
-                      <button
-                        type="button"
-                        key={day}
-                        onClick={() => handleToggleDay(day)}
-                        className={`text-xs font-bold tracking-wider px-2.5 py-1.5 rounded-lg border transition-all ${
-                          isSelected 
-                            ? "bg-slate-900 border-slate-900 text-white" 
-                            : "bg-slate-50 border-slate-250 text-slate-500"
-                        }`}
-                      >
-                        {day}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Assigned Teachers selection */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5 animate-fade-in">
-                  <label className="block text-xs font-bold text-slate-500 uppercase">Assigned Teachers</label>
-                  {teachers.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const allSelected = bTeachers.length === teachers.length;
-                        setBTeachers(allSelected ? [] : teachers.map(t => t.id));
-                      }}
-                      className="text-[10px] text-emerald-600 font-extrabold hover:underline"
-                    >
-                      {bTeachers.length === teachers.length ? "Deselect All" : "Select All Teachers"}
-                    </button>
-                  )}
-                </div>
-                
-                {teachers.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic bg-slate-50 p-3 rounded-xl border border-slate-100">
-                    No active registered teachers found in system. Create accounts in Settings Desk tab first!
-                  </p>
-                ) : (
-                  <div className="max-h-[120px] overflow-y-auto border border-slate-250/70 rounded-xl p-3 bg-slate-50 space-y-2">
-                    {teachers.map((t) => {
-                      const isChecked = bTeachers.includes(t.id);
-                      return (
-                        <label key={t.id} className="flex items-center gap-2.5 p-1.5 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors text-xs font-semibold text-slate-700 select-none">
-                          <input 
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => {
-                              setBTeachers(prev => 
-                                prev.includes(t.id) 
-                                  ? prev.filter(id => id !== t.id) 
-                                  : [...prev, t.id]
-                              );
-                            }}
-                            className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
-                          />
-                          <div>
-                            <span className="font-bold text-slate-800 block leading-tight">{t.name}</span>
-                            <span className="text-[9px] text-slate-400 font-mono">{t.email}</span>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-3 pt-4">
+              {/* Pinned Action Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3 shrink-0">
                 <button 
                   type="button" 
                   onClick={() => {
@@ -517,13 +538,13 @@ export default function BatchAttendanceView({
                     setBTeachers([]);
                     setBTargetClass("Grade 10");
                   }}
-                  className="flex-1 bg-slate-100 text-slate-600 font-bold py-2.5 rounded-xl cursor-pointer text-sm"
+                  className="flex-1 bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold py-2.5 rounded-xl cursor-pointer text-sm transition-all"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit" 
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl cursor-pointer text-sm font-display shadow-md shadow-emerald-50"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-xl cursor-pointer text-sm font-display shadow-md shadow-emerald-50 transition-all"
                 >
                   {editingBatchId ? "Save Configurations" : "Create Schedule"}
                 </button>
@@ -537,8 +558,13 @@ export default function BatchAttendanceView({
         const batchToDelete = batches.find(b => b.id === deleteConfirmBatchId);
         if (!batchToDelete) return null;
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl border border-rose-100 w-full max-w-md overflow-hidden transform scale-100 transition-all animate-fade-in text-center p-6 space-y-4">
+          <div 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setDeleteConfirmBatchId(null);
+            }}
+          >
+            <div className="bg-white rounded-2xl shadow-2xl border border-rose-100 w-full max-w-md overflow-hidden transform scale-100 transition-all animate-fade-in text-center p-6 space-y-4 touch-auto select-text">
               <div className="mx-auto w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center">
                 <AlertCircle className="w-6 h-6" />
               </div>

@@ -7,8 +7,6 @@ import {
   ChevronRight, 
   CheckCircle2, 
   UserPlus,
-  MessageSquare,
-  Send,
   AlertTriangle
 } from "lucide-react";
 import { 
@@ -21,7 +19,6 @@ import {
   Tooltip
 } from "recharts";
 import { Student, Batch, FeeInstallment, AttendanceRecord, TransferRequest } from "../types";
-import { isPayAsYouGoModel } from "../utils";
 
 interface DashboardViewProps {
   students: Student[];
@@ -217,7 +214,7 @@ export default function DashboardView({
             Active Administration Panel
           </span>
           <h2 className="font-display text-2xl md:text-3xl font-bold mt-2">
-            Welcome to ClassSetu 🎓
+            Welcome to ClasSetu 🎓
           </h2>
           <p className="text-emerald-100/90 text-sm mt-1">
             Real-time coaching administration, student rosters, billing ledger tracking, and parent communication dispatch.
@@ -232,238 +229,13 @@ export default function DashboardView({
         </button>
       </div>
 
-      {/* Real-time API Dispatch Balances */}
-      {(() => {
-        const isPayAsYouGo = isPayAsYouGoModel(instituteData);
-
-        const isWhatsAppEnabled = instituteData?.isWhatsAppEnabled ?? false;
-        const isSmsEnabled = instituteData?.isSmsEnabled ?? false;
-        const whatsappLimit = Number(instituteData?.whatsappLimit ?? 0);
-        const whatsappSent = Number(instituteData?.whatsappSent ?? 0);
-        const whatsappRemaining = Math.max(0, whatsappLimit - whatsappSent);
-
-        const smsLimit = Number(instituteData?.smsLimit ?? 0);
-        const smsSent = Number(instituteData?.smsSent ?? 0);
-        const smsRemaining = Math.max(0, smsLimit - smsSent);
-
-        const showAllExhaustedAlert = !isPayAsYouGo && (isWhatsAppEnabled && whatsappRemaining <= 0) && (isSmsEnabled && smsRemaining <= 0);
-
-        return (
-          <div className="bg-slate-50 rounded-2xl p-6 border border-slate-200/60 shadow-inner space-y-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                    📡 Real-Time Communication API Gateways
-                  </h3>
-                  {isPayAsYouGo ? (
-                    <span className="bg-purple-100 text-purple-800 border border-purple-200/80 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse"></span>
-                      Pay As You Go
-                    </span>
-                  ) : (
-                    <span className="bg-blue-100 text-blue-800 border border-blue-200/80 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider">
-                      Fixed Quota Plan
-                    </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-450 mt-0.5">
-                  {isPayAsYouGo 
-                    ? "Uncapped messaging active. Post-billed dynamically at month end based on total usage."
-                    : "Live automated balance counters synchronized directly with carrier channels."}
-                </p>
-              </div>
-              {showAllExhaustedAlert && (
-                <span className="bg-rose-50 border border-rose-200 text-rose-600 px-3 py-1 rounded-lg text-xs font-bold animate-pulse flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                  All message limits exhausted. Contact Master Admin.
-                </span>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Widget 1: WhatsApp */}
-              <div className="bg-white rounded-xl p-5 border border-slate-100 shadow-sm relative overflow-hidden flex flex-col justify-between">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`p-2.5 rounded-lg ${isWhatsAppEnabled ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-                      <MessageSquare className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">WhatsApp Service</h4>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide mt-1 ${isWhatsAppEnabled ? 'bg-emerald-100 text-emerald-800 border border-emerald-200/40' : 'bg-slate-100 text-slate-500 border border-slate-200/40'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isWhatsAppEnabled ? 'bg-emerald-500 animate-ping' : 'bg-slate-400'}`}></span>
-                        {isWhatsAppEnabled ? 'Active' : 'Disabled'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-slate-400 block uppercase tracking-wide">
-                      {isPayAsYouGo ? "Total Dispatched" : "Remaining Balance"}
-                    </span>
-                    <span className={`text-2xl font-black font-mono tracking-tight ${!isPayAsYouGo && whatsappRemaining <= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                      {isPayAsYouGo ? `${whatsappSent} msgs` : whatsappRemaining}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-3.5">
-                  {/* Progress Bar / Usage Counter */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] font-bold font-mono text-slate-400 uppercase">
-                      {isPayAsYouGo ? (
-                        <>
-                          <span className="text-emerald-800 font-bold">WhatsApp Messages Used: {whatsappSent} (No Limit)</span>
-                          <span className="text-purple-600 font-bold">Uncapped</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>WhatsApp Balance: {whatsappSent} / {whatsappLimit}</span>
-                          <span>Left: {whatsappRemaining}</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          isPayAsYouGo 
-                            ? 'bg-gradient-to-r from-emerald-500 to-emerald-400' 
-                            : whatsappRemaining <= 0 ? 'bg-rose-500' : 'bg-emerald-500'
-                        }`}
-                        style={{ width: `${isPayAsYouGo ? 100 : (whatsappLimit > 0 ? Math.min(100, (whatsappSent / whatsappLimit) * 100) : 0)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* Status Message */}
-                  {isPayAsYouGo ? (
-                    <div className="bg-emerald-50/80 border border-emerald-100 text-emerald-800 px-3 py-2 rounded-lg text-[11px] font-semibold flex justify-between items-center">
-                      <span>📊 Monthly Usage for Billing: <strong className="font-mono">{whatsappSent}</strong> messages</span>
-                      <span className="text-[10px] uppercase font-black bg-emerald-100 text-emerald-900 px-1.5 py-0.5 rounded">Post-Billed</span>
-                    </div>
-                  ) : (
-                    isWhatsAppEnabled && whatsappRemaining <= 0 && (
-                      <div className="bg-rose-50 border border-rose-100 text-rose-700 px-3 py-2 rounded-lg text-xs font-medium leading-relaxed">
-                        ⚠️ WhatsApp limit exhausted, shifting to SMS only or blocked.
-                      </div>
-                    )
-                  )}
-                </div>
-              </div>
-
-              {/* Widget 2: SMS */}
-              <div className="bg-white rounded-xl p-5 border border-slate-100 shadow-sm relative overflow-hidden flex flex-col justify-between">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`p-2.5 rounded-lg ${isSmsEnabled ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
-                      <Send className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">SMS Service</h4>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide mt-1 ${isSmsEnabled ? 'bg-indigo-100 text-indigo-800 border border-indigo-200/40' : 'bg-slate-100 text-slate-500 border border-slate-200/40'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isSmsEnabled ? 'bg-indigo-500 animate-ping' : 'bg-slate-400'}`}></span>
-                        {isSmsEnabled ? 'Active' : 'Disabled'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-slate-400 block uppercase tracking-wide">
-                      {isPayAsYouGo ? "Total Dispatched" : "Remaining Balance"}
-                    </span>
-                    <span className={`text-2xl font-black font-mono tracking-tight ${!isPayAsYouGo && smsRemaining <= 0 ? 'text-rose-600' : 'text-indigo-600'}`}>
-                      {isPayAsYouGo ? `${smsSent} msgs` : smsRemaining}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-3.5">
-                  {/* Progress Bar / Usage Counter */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] font-bold font-mono text-slate-450 uppercase">
-                      {isPayAsYouGo ? (
-                        <>
-                          <span className="text-indigo-800 font-bold">SMS Messages Used: {smsSent} (No Limit)</span>
-                          <span className="text-purple-600 font-bold">Uncapped</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>SMS Balance: {smsSent} / {smsLimit}</span>
-                          <span>Left: {smsRemaining}</span>
-                        </>
-                      )}
-                    </div>
-                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          isPayAsYouGo 
-                            ? 'bg-gradient-to-r from-indigo-500 to-indigo-400' 
-                            : smsRemaining <= 0 ? 'bg-rose-500' : 'bg-indigo-500'
-                        }`}
-                        style={{ width: `${isPayAsYouGo ? 100 : (smsLimit > 0 ? Math.min(100, (smsSent / smsLimit) * 100) : 0)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  {/* Status Message */}
-                  {isPayAsYouGo ? (
-                    <div className="bg-indigo-50/80 border border-indigo-100 text-indigo-800 px-3 py-2 rounded-lg text-[11px] font-semibold flex justify-between items-center">
-                      <span>📊 Monthly Usage for Billing: <strong className="font-mono">{smsSent}</strong> messages</span>
-                      <span className="text-[10px] uppercase font-black bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded">Post-Billed</span>
-                    </div>
-                  ) : (
-                    isSmsEnabled && smsRemaining <= 0 && (
-                      <div className="bg-rose-50 border border-rose-100 text-rose-700 px-3 py-2 rounded-lg text-xs font-medium leading-relaxed">
-                        ⚠️ SMS limit exhausted, shifting to WhatsApp only or blocked.
-                      </div>
-                    )
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Total Monthly Usage Summary for Billing (Pay As You Go Option) */}
-            {isPayAsYouGo && (
-              <div className="bg-purple-50/90 border border-purple-200/80 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-purple-100 text-purple-700 rounded-lg font-bold text-lg flex-shrink-0">
-                    🧾
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-purple-900 uppercase tracking-wider">Total Monthly Usage for Billing</h4>
-                    <p className="text-xs text-purple-700 mt-0.5">
-                      Uncapped dispatches. Messages will never be blocked under Pay As You Go model.
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-xl border border-purple-100 shadow-sm w-full sm:w-auto justify-between sm:justify-end">
-                  <div className="text-center">
-                    <span className="text-[9px] font-bold text-slate-400 block uppercase">WhatsApp</span>
-                    <span className="text-xs font-black text-emerald-600 font-mono">{whatsappSent}</span>
-                  </div>
-                  <span className="text-slate-300 font-bold text-xs">+</span>
-                  <div className="text-center">
-                    <span className="text-[9px] font-bold text-slate-400 block uppercase">SMS</span>
-                    <span className="text-xs font-black text-indigo-600 font-mono">{smsSent}</span>
-                  </div>
-                  <span className="text-slate-300 font-bold text-xs">=</span>
-                  <div className="text-center pl-2 border-l border-slate-100">
-                    <span className="text-[9px] font-bold text-purple-600 block uppercase">Total Billed</span>
-                    <span className="text-sm font-black text-purple-900 font-mono">{whatsappSent + smsSent} msgs</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
       {/* --- STUDENT TRANSFER REQUESTS CENTER --- */}
       <div className="bg-white rounded-2xl p-6 border border-slate-150 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
           <div>
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
               <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-sm">📥</span>
-              Student Transfer Requests (स्थानांतरण अनुरोध)
+              Student Transfer Requests
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               These students are currently registered under your institute. Another institute has requested to transfer them to their rosters.
@@ -504,13 +276,13 @@ export default function DashboardView({
                       onClick={() => onRejectRequest?.(req)}
                       className="flex-1 sm:flex-none px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                     >
-                      Reject (अस्वीकार करें)
+                      Reject
                     </button>
                     <button
                       onClick={() => onApproveRequest?.(req)}
                       className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer shadow-sm flex items-center justify-center gap-1"
                     >
-                      Approve (स्वीकार करें)
+                      Approve
                     </button>
                   </div>
                 </div>
@@ -518,7 +290,7 @@ export default function DashboardView({
           </div>
         ) : (
           <div className="bg-slate-50 border border-slate-100 rounded-xl p-6 text-center text-xs text-slate-500">
-            🍃 कोई लंबित स्थानांतरण अनुरोध नहीं है। (No pending student transfer requests.)
+            🍃 No pending student transfer requests.
           </div>
         )}
       </div>

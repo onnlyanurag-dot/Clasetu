@@ -133,16 +133,39 @@ export default function TimeInput({ label, value, onChange, id, required = true 
           />
         </div>
 
-        {/* AM/PM Dropdown SELECTOR next to numeric inputs */}
-        <select
-          value={ampm}
-          onChange={handleAmpmChange}
-          className="px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer h-[34px]"
-          aria-label={`${label} AM or PM`}
-        >
-          <option value="AM">AM</option>
-          <option value="PM">PM</option>
-        </select>
+        {/* AM/PM Segmented Control - 100% reliable in Fullscreen, iFrame and mobile */}
+        <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200 h-[34px] items-center shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setAmpm("AM");
+              propagateChange(hour, minute, "AM");
+            }}
+            className={`px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer ${
+              ampm === "AM"
+                ? "bg-white text-emerald-700 shadow-sm border border-slate-200/80"
+                : "text-slate-400 hover:text-slate-700"
+            }`}
+            aria-label={`${label} AM`}
+          >
+            AM
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAmpm("PM");
+              propagateChange(hour, minute, "PM");
+            }}
+            className={`px-2.5 py-1 text-xs font-black rounded-lg transition-all cursor-pointer ${
+              ampm === "PM"
+                ? "bg-white text-emerald-700 shadow-sm border border-slate-200/80"
+                : "text-slate-400 hover:text-slate-700"
+            }`}
+            aria-label={`${label} PM`}
+          >
+            PM
+          </button>
+        </div>
       </div>
     </div>
   );

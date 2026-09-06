@@ -71,9 +71,9 @@ export default function FeesManagerView({
   const [payingAmount, setPayingAmount] = useState("");
   const [paymentMode, setPaymentMode] = useState<"Cash" | "Bank/Online">("Cash");
 
-  // Background scroll lock effect when selected student folder is active
+  // Background scroll lock effect when selected student folder or dropdown is active
   React.useEffect(() => {
-    if (selectedStudent) {
+    if (selectedStudent || isBatchDropdownOpen || isStatusDropdownOpen) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -81,7 +81,7 @@ export default function FeesManagerView({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [selectedStudent]);
+  }, [selectedStudent, isBatchDropdownOpen, isStatusDropdownOpen]);
 
   const handleTriggerReminderClick = async (inst: FeeInstallment, student: Student) => {
     if (isSubscribed === false) {
@@ -623,15 +623,28 @@ export default function FeesManagerView({
           
           {isBatchDropdownOpen && (
             <>
-              {/* Full-screen backdrop with light blur to dismiss on tap anywhere */}
+              {/* Full-screen backdrop with light blur to dismiss on tap anywhere, preventing background scroll */}
               <div 
-                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in" 
+                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in touch-none overscroll-none select-none" 
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsBatchDropdownOpen(false);
                 }}
+                onTouchMove={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onWheel={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               />
-              <div className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-150 rounded-xl shadow-xl py-1.5 z-50 max-h-56 overflow-y-auto text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in">
+              <div 
+                className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl py-1.5 z-50 max-h-56 overflow-y-auto overscroll-contain touch-pan-y text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+                onTouchMove={(e) => e.stopPropagation()}
+                onWheel={(e) => e.stopPropagation()}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -680,15 +693,28 @@ export default function FeesManagerView({
           
           {isStatusDropdownOpen && (
             <>
-              {/* Full-screen backdrop with light blur to dismiss on tap anywhere */}
+              {/* Full-screen backdrop with light blur to dismiss on tap anywhere, preventing background scroll */}
               <div 
-                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in" 
+                className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2.5px] z-40 cursor-default animate-fade-in touch-none overscroll-none select-none" 
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsStatusDropdownOpen(false);
                 }}
+                onTouchMove={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onWheel={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
               />
-              <div className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-150 rounded-xl shadow-xl py-1.5 z-50 max-h-56 overflow-y-auto text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in">
+              <div 
+                className="absolute top-full right-0 left-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-2xl py-1.5 z-50 max-h-56 overflow-y-auto overscroll-contain touch-pan-y text-xs font-medium text-slate-700 divide-y divide-slate-50 animate-fade-in"
+                onClick={(e) => e.stopPropagation()}
+                onTouchMove={(e) => e.stopPropagation()}
+                onWheel={(e) => e.stopPropagation()}
+              >
                 <button
                   type="button"
                   onClick={() => {
@@ -831,8 +857,17 @@ export default function FeesManagerView({
 
       {/* --- SINGLE CONSOLIDATED STUDENT FEES PROFILE MODAL --- */}
       {selectedStudent && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-indigo-150 w-full max-w-2xl max-h-[90vh] overflow-y-auto transform scale-100 transition-all text-slate-800">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto overscroll-contain"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedStudent(null);
+              setActivePayingInst(null);
+              setPayingAmount("");
+            }
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-indigo-150 w-full max-w-2xl max-h-[90vh] overflow-y-auto transform scale-100 transition-all text-slate-800 overscroll-contain my-auto">
             
             <div className="bg-slate-900 text-white p-5 justify-between items-center flex sticky top-0 z-10 animate-fade-in">
               <div className="flex items-center gap-2">

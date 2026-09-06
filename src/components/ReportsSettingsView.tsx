@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import Cropper, { Area } from 'react-easy-crop';
 import { 
   Settings, 
   FileSpreadsheet, 
@@ -36,48 +37,35 @@ interface ReportsSettingsViewProps {
   onSubscriptionBlocked?: () => void;
 }
 
-const resizeImageAndGetBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target?.result as string;
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 150;
-        const MAX_HEIGHT = 150;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(event.target?.result as string);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/png");
-        resolve(dataUrl);
-      };
-      img.onerror = (err) => reject(err);
-    };
-    reader.onerror = (err) => reject(err);
+const createImage = (url: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.setAttribute('crossOrigin', 'anonymous');
+    image.src = url;
   });
-};
+
+export async function getCroppedImg(imageSrc: string, pixelCrop: Area): Promise<string> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return "";
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+  return canvas.toDataURL('image/jpeg');
+}
 
 export default function ReportsSettingsView({
   settings,
@@ -318,6 +306,12 @@ export default function ReportsSettingsView({
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState("");
+  const [showResetLogoConfirm, setShowResetLogoConfirm] = useState(false);
+  const [pendingLogo, setPendingLogo] = useState<string | null>(null);
+  const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 
   // Teacher credentials state
   const [tName, setTName] = useState("");
@@ -405,7 +399,7 @@ export default function ReportsSettingsView({
     const csvRows: string[][] = [];
 
     // Metadata/Header
-    csvRows.push([`"INSTITUTE NAME: ${settings.name || "ClassSetu Premium Coaching"}"`]);
+    csvRows.push([`"INSTITUTE NAME: ${settings.name || "ClasSetu Premium Coaching"}"`]);
     csvRows.push([`"EXCEL EXPORT COMPLETED AT: ${new Date().toLocaleString()}"`]);
     csvRows.push([]); // Spacer
 
@@ -539,6 +533,11 @@ export default function ReportsSettingsView({
 
     if (tPassword.length < 6) {
       setTError("Password must be at least 6 characters long.");
+      setTLoading(false);
+      return;
+    }
+    if (tPassword.length > 18) {
+      setTError("Password cannot exceed 18 characters.");
       setTLoading(false);
       return;
     }
@@ -893,12 +892,12 @@ export default function ReportsSettingsView({
           <div className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-6">
           <div className="flex justify-between items-center pb-2 border-b">
             <h3 className="font-display font-medium text-base text-slate-800 flex items-center gap-2">
-              <FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Administrative spreadsheets downloads
+              <FileSpreadsheet className="w-5 h-5 text-emerald-600" /> Data Export & Reporting
             </h3>
           </div>
 
           <p className="text-xs text-slate-500 leading-relaxed">
-            Generate fully compiled CSV metrics reports instantly. Clean columns compatible with Microsoft Excel, Google Sheets, or Apple Numbers.
+            Generate comprehensive CSV reports for analysis in Microsoft Excel, Google Sheets, or Apple Numbers.
           </p>
 
           <div className="space-y-4 pt-2">
@@ -972,8 +971,8 @@ export default function ReportsSettingsView({
           </div>
 
           <p className="text-xs text-slate-500 leading-relaxed">
-            जब भी नया अकैडमिक सत्र (New Academic Year) शुरू करना हो, तो आप सभी विद्यार्थियों का डेटा क्लास-वाइज़ एक्सेल में बैकअप लेकर एक साथ डिलीट कर सकते हैं। 
-            <span className="font-semibold text-rose-650 block mt-1">⚠️ सुरक्षा कारणों से, बिना क्लास-वाइज़ एक्सेल बैकअप डाउनलोड किए डिलीट फ़ंक्शन अनलॉक नहीं होगा।</span>
+            When transitioning to a New Academic Year, you can backup student data class-wise in Excel spreadsheets and perform bulk session resets safely. 
+            <span className="font-semibold text-rose-650 block mt-1">⚠️ For security and compliance, the delete option remains locked until the class Excel backup is downloaded.</span>
           </p>
 
           {resetSuccessMsg && (
@@ -1011,9 +1010,10 @@ export default function ReportsSettingsView({
                   <input 
                     type="password" 
                     required 
+                    maxLength={18}
                     value={ownerPassword} 
-                    onChange={(e) => setOwnerPassword(e.target.value)}
-                    placeholder="••••••••"
+                    onChange={(e) => setOwnerPassword(e.target.value.slice(0, 18))}
+                    placeholder="•••••••• (max 18 chars)"
                     className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                   />
                 </div>
@@ -1123,7 +1123,7 @@ export default function ReportsSettingsView({
                     {logo && (logo.startsWith("data:image") || logo.startsWith("http")) && (
                       <button
                         type="button"
-                        onClick={() => setLogo("🎓")}
+                        onClick={() => setShowResetLogoConfirm(true)}
                         className="absolute bottom-2 text-[10px] text-rose-500 font-bold hover:underline cursor-pointer"
                       >
                         Reset to Emoji
@@ -1134,7 +1134,7 @@ export default function ReportsSettingsView({
                   {/* Upload Controls */}
                   <div className="col-span-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Upload Image Logo (संस्थान का लोगो अपलोड करें)</label>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Upload Image Logo</label>
                       <label className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white border border-dashed border-slate-300 rounded-xl hover:border-emerald-500 hover:bg-emerald-50/10 cursor-pointer transition-all group h-[42px]">
                         <Upload className="w-4 h-4 text-slate-400 group-hover:text-emerald-600" />
                         <span className="text-xs font-bold text-slate-700 group-hover:text-emerald-600">
@@ -1143,16 +1143,15 @@ export default function ReportsSettingsView({
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={async (e) => {
+                          onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) {
-                              try {
-                                const base64 = await resizeImageAndGetBase64(file);
-                                setLogo(base64);
-                              } catch (err) {
-                                console.error("Failed to process image:", err);
-                                alert("Failed to process image. Please try again.");
-                              }
+                              const reader = new FileReader();
+                              reader.onload = (e) => {
+                                setPendingLogo(e.target?.result as string);
+                                setShowAdjustmentModal(true);
+                              };
+                              reader.readAsDataURL(file);
                             }
                           }}
                           className="hidden"
@@ -1161,15 +1160,6 @@ export default function ReportsSettingsView({
                     </div>
 
                     <div className="sm:col-span-1">
-                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">Or Text/Emoji</label>
-                      <input 
-                        type="text" 
-                        maxLength={10}
-                        value={logo && (logo.startsWith("data:image") || logo.startsWith("http")) ? "" : logo}
-                        onChange={(e) => setLogo(e.target.value || "🎓")}
-                        placeholder="🎓"
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-center text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 h-[42px]"
-                      />
                     </div>
                   </div>
                 </div>
@@ -1214,9 +1204,6 @@ export default function ReportsSettingsView({
                 </div>
               </div>
 
-              <p className="text-[10px] text-slate-400 leading-normal italic">
-                *Modifying configurations overwrites generated ID cards, parent notice alerts, and receipt PDFs automatically to match updated institute branding.
-              </p>
 
               <div className="pt-4 border-t border-slate-50">
                 <button 
@@ -1304,14 +1291,16 @@ export default function ReportsSettingsView({
                       type="password" 
                       required
                       minLength={6}
-                      placeholder="••••••••"
+                      maxLength={18}
+                      placeholder="•••••••• (6-18 chars)"
                       value={tPassword}
-                      onChange={(e) => setTPassword(e.target.value)}
+                      onChange={(e) => setTPassword(e.target.value.slice(0, 18))}
                       className="w-full px-4 py-2 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                     />
-                    <p className="text-[10px] text-slate-400 mt-1 italic">
-                      *Minimum 6 characters. Sub-account log-in credentials can be used in App 3.
-                    </p>
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
+                      <span className="italic">*Min 6 to Max 18 characters. Sub-account log-in for App 3.</span>
+                      {tPassword.length > 0 && <span className="font-mono font-bold text-slate-500">{tPassword.length}/18</span>}
+                    </div>
                   </div>
 
                   <button 
@@ -1456,14 +1445,16 @@ export default function ReportsSettingsView({
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter new portal password (min 6 chars)"
+                  maxLength={18}
+                  placeholder="Enter new portal password (6-18 chars)"
                   value={newTeacherPassword}
-                  onChange={(e) => setNewTeacherPassword(e.target.value)}
+                  onChange={(e) => setNewTeacherPassword(e.target.value.slice(0, 18))}
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
                 />
-                <p className="text-[10px] text-slate-450 leading-relaxed mt-1.5 italic">
-                  *Provide a reliable portal key. Teacher accounts can sign in immediately on App 3 with their existing registered email.
-                </p>
+                <div className="flex justify-between items-center text-[10px] text-slate-450 mt-1.5">
+                  <span className="italic">*Min 6 to Max 18 characters. Sub-accounts can sign in immediately with registered email.</span>
+                  {newTeacherPassword.length > 0 && <span className="font-mono font-bold text-slate-600">{newTeacherPassword.length}/18</span>}
+                </div>
               </div>
 
               {passwordSuccess && (
@@ -1498,6 +1489,10 @@ export default function ReportsSettingsView({
                     const selectedTeacherDocId = selectedTeacher.id;
                     if (!newTeacherPassword || newTeacherPassword.trim().length < 6) {
                       setPasswordError("Password must be at least 6 characters long.");
+                      return;
+                    }
+                    if (newTeacherPassword.length > 18) {
+                      setPasswordError("Password cannot exceed 18 characters.");
                       return;
                     }
                     setPasswordLoading(true);
@@ -1545,7 +1540,7 @@ export default function ReportsSettingsView({
                   <Trash2 className="w-5 h-5 text-rose-600" /> Remove Teacher Account
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  शिक्षक का सब-अकाउंट स्थायी रूप से हटाएं
+                  Permanently remove teacher portal sub-account
                 </p>
               </div>
               <button
@@ -1617,6 +1612,118 @@ export default function ReportsSettingsView({
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logo Reset Confirmation Modal */}
+      {showResetLogoConfirm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 border border-slate-100 shadow-2xl space-y-4">
+            <h3 className="font-bold text-slate-800">Reset Logo?</h3>
+            <p className="text-xs text-slate-600">Are you sure you want to reset the institute logo to the default emoji?</p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowResetLogoConfirm(false)}
+                className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLogo("🎓");
+                  setShowResetLogoConfirm(false);
+                }}
+                className="flex-1 bg-rose-600 text-white py-2 rounded-xl text-xs font-bold"
+              >
+                Confirm Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Logo Adjustment Modal */}
+      {showAdjustmentModal && pendingLogo && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 border border-slate-100 shadow-2xl space-y-4">
+            <h3 className="font-bold text-slate-800">Adjust Logo</h3>
+            <div className="relative w-full h-64 bg-slate-50 rounded-xl overflow-hidden">
+              <Cropper
+                image={pendingLogo}
+                crop={crop}
+                zoom={zoom}
+                aspect={1}
+                onCropChange={setCrop}
+                onCropComplete={(_, pixels) => setCroppedAreaPixels(pixels)}
+                onZoomChange={setZoom}
+              />
+            </div>
+            <input
+              type="range"
+              value={zoom}
+              min={1}
+              max={3}
+              step={0.1}
+              onChange={(e) => setZoom(Number(e.target.value))}
+              className="w-full"
+            />
+            <p className="text-xs text-slate-600">Drag and zoom to adjust your logo.</p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingLogo(null);
+                  setShowAdjustmentModal(false);
+                }}
+                className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (pendingLogo && croppedAreaPixels) {
+                    const croppedImage = await getCroppedImg(pendingLogo, croppedAreaPixels);
+                    setLogo(croppedImage);
+                  }
+                  setPendingLogo(null);
+                  setShowAdjustmentModal(false);
+                }}
+                className="flex-1 bg-emerald-600 text-white py-2 rounded-xl text-xs font-bold"
+              >
+                Confirm & Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showResetLogoConfirm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 border border-slate-100 shadow-2xl space-y-4">
+            <h3 className="font-bold text-slate-800">Reset Logo?</h3>
+            <p className="text-xs text-slate-600">Are you sure you want to reset the institute logo to the default emoji?</p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowResetLogoConfirm(false)}
+                className="flex-1 bg-slate-100 text-slate-600 py-2 rounded-xl text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLogo("🎓");
+                  setShowResetLogoConfirm(false);
+                }}
+                className="flex-1 bg-rose-600 text-white py-2 rounded-xl text-xs font-bold"
+              >
+                Confirm Reset
+              </button>
             </div>
           </div>
         </div>

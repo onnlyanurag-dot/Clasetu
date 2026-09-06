@@ -24,6 +24,10 @@ export default function AuthPage({ onLoginSuccess }: AuthPageProps) {
       setError("Please fill in all credentials.");
       return;
     }
+    if (password.length > 18) {
+      setError("Password cannot exceed 18 characters.");
+      return;
+    }
     setError("");
     setSuccess("");
     setLoading(true);
@@ -83,8 +87,8 @@ export default function AuthPage({ onLoginSuccess }: AuthPageProps) {
               🎓
             </div>
             <div>
-              <h1 className="font-display text-2xl font-bold tracking-tight">ClassSetu</h1>
-              <p className="text-emerald-100 text-xs mt-1">AI-Powered Tuition & Coaching Management</p>
+              <h1 className="font-display text-2xl font-bold tracking-tight">ClasSetu</h1>
+              <p className="text-emerald-100 text-xs mt-1">Manage better, Teach better.</p>
             </div>
           </div>
         </div>
@@ -104,16 +108,6 @@ export default function AuthPage({ onLoginSuccess }: AuthPageProps) {
             </div>
           )}
 
-          {/* SIMULATION PRESET HINT TO FIT THE GUIDELINES FOR FRICTIONLESS ACCESS */}
-          {!isForgotMode && (
-            <div className="mb-6 p-3 bg-emerald-50 rounded-lg text-xs text-emerald-800 border border-emerald-100">
-              <span className="font-bold">Instant Login Credentials:</span>
-              <div className="mt-1 font-mono">
-                Email: <span className="underline">adzentive@gmail.com</span> <br />
-                Password: <span className="font-bold underline">password123</span>
-              </div>
-            </div>
-          )}
 
           {!isForgotMode ? (
             /* STANDARD LOGIN FORM */
@@ -162,10 +156,11 @@ export default function AuthPage({ onLoginSuccess }: AuthPageProps) {
                   <input
                     type={showPassword ? "text" : "password"}
                     required
+                    maxLength={18}
                     id="login-password"
-                    placeholder="Enter admin password"
+                    placeholder="Enter admin password (max 18 chars)"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => setPassword(e.target.value.slice(0, 18))}
                     className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all text-slate-800 placeholder-slate-400 text-sm"
                   />
                   <button
@@ -176,6 +171,10 @@ export default function AuthPage({ onLoginSuccess }: AuthPageProps) {
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
+                </div>
+                <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
+                  <span>Maximum limit: 18 characters</span>
+                  {password.length > 0 && <span className="font-mono">{password.length}/18</span>}
                 </div>
               </div>
 

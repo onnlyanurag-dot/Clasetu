@@ -83,9 +83,9 @@ export default function WhatsAppCenterView({
   const [testRecipientPhone, setTestRecipientPhone] = useState("");
   const [testMessageType, setTestMessageType] = useState<"template" | "text">("template");
   const [testTemplateName, setTestTemplateName] = useState("hello_world");
-  const [testParam1, setTestParam1] = useState("ClassSetu Parent");
+  const [testParam1, setTestParam1] = useState("ClasSetu Parent");
   const [testParam2, setTestParam2] = useState("Alpha Coaching Institute");
-  const [testTextMessage, setTestTextMessage] = useState("Hello! This is a live test notification from ClassSetu WhatsApp Cloud API.");
+  const [testTextMessage, setTestTextMessage] = useState("Hello! This is a live test notification from ClasSetu WhatsApp Cloud API.");
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [testResult, setTestResult] = useState<any | null>(null);
 
@@ -652,21 +652,11 @@ export default function WhatsAppCenterView({
                     
                     {/* Balance indicator */}
                     <div className="mt-2 flex justify-between items-center text-[10px] font-semibold text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100">
-                      <span>Balance Available:</span>
-                      {isPayAsYouGo ? (
-                        <span className="text-purple-700 font-mono font-bold flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse"></span>
-                          Pay As You Go (No Limit) — Used: {broadcastMedium === "WhatsApp" ? whatsappSent : smsSent} msgs
-                        </span>
-                      ) : broadcastMedium === "WhatsApp" ? (
-                        <span className="text-emerald-700 font-mono font-bold">
-                          {whatsappRemaining} / {whatsappLimit} free credits
-                        </span>
-                      ) : (
-                        <span className="text-indigo-700 font-mono font-bold">
-                          {smsRemaining} / {smsLimit} free SMS credits
-                        </span>
-                      )}
+                      <span>Service Status:</span>
+                      <span className="text-purple-700 font-mono font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-600 animate-pulse"></span>
+                        Pay As You Go (Uncapped) — Dispatched: {broadcastMedium === "WhatsApp" ? whatsappSent : smsSent} msgs
+                      </span>
                     </div>
                   </div>
 
@@ -792,7 +782,7 @@ export default function WhatsAppCenterView({
                         🎓
                       </div>
                       <div>
-                        <h4 className="text-xs font-bold">ClassSetu Broadcaster</h4>
+                        <h4 className="text-xs font-bold">ClasSetu Broadcaster</h4>
                         <p className="text-[8px] text-emerald-200">Online • verified business</p>
                       </div>
                     </div>
@@ -829,7 +819,7 @@ export default function WhatsAppCenterView({
                       <div className="w-8 h-8 rounded-full bg-slate-300 text-slate-700 flex items-center justify-center font-bold text-xs">
                         💬
                       </div>
-                      <h4 className="text-[10px] font-bold mt-1 text-slate-800">ClassSetu SMS Gateway</h4>
+                      <h4 className="text-[10px] font-bold mt-1 text-slate-800">ClasSetu SMS Gateway</h4>
                       <p className="text-[7px] text-slate-500 uppercase tracking-wider">iMessage / Text Message</p>
                     </div>
 
@@ -851,7 +841,7 @@ export default function WhatsAppCenterView({
                     {/* Input field footer mock */}
                     <div className="bg-[#f4f4f5] p-2 border-t flex items-center gap-2">
                       <div className="bg-white flex-1 rounded-full py-1.5 px-3 text-[10px] text-slate-400 border border-slate-200">
-                        Text Message (ClassSetu Gateway)
+                        Text Message (ClasSetu Gateway)
                       </div>
                       <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center text-sm shadow-sm font-bold">
                         ↑

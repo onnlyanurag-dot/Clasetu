@@ -24,6 +24,7 @@ import BatchAttendanceView from "./components/BatchAttendanceView";
 import FeesManagerView from "./components/FeesManagerView";
 import WhatsAppCenterView from "./components/WhatsAppCenterView";
 import ReportsSettingsView from "./components/ReportsSettingsView";
+import BillingManagerView from "./components/BillingManagerView";
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, addDoc, deleteDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
 import { formatGrade, getInstallmentDueDates, isPayAsYouGoModel } from "./utils";
@@ -62,7 +63,7 @@ export default function App() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [transferRequests, setTransferRequests] = useState<TransferRequest[]>([]);
   const [settings, setSettings] = useState<InstituteSettings>({
-    name: "ClassSetu Premium Coaching",
+    name: "ClasSetu Premium Coaching",
     logo: "🎓",
     address: "",
     contact: ""
@@ -75,7 +76,7 @@ export default function App() {
 
   // Background scroll lock effect when modal or overlay is open
   useEffect(() => {
-    if (showLogoutConfirm || menuOpen) {
+    if (showLogoutConfirm || menuOpen || subscriptionAlert) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -83,7 +84,7 @@ export default function App() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [showLogoutConfirm, menuOpen]);
+  }, [showLogoutConfirm, menuOpen, subscriptionAlert]);
 
   // Load Firestore states if authenticated
   const loadWorkspaceStateForUser = async (uid: string) => {
@@ -103,7 +104,7 @@ export default function App() {
           userData = {
             email: auth.currentUser?.email || "adzentive@gmail.com",
             institute: {
-              instituteName: legacyData.settings?.name || "ClassSetu Premium Coaching"
+              instituteName: legacyData.settings?.name || "ClasSetu Premium Coaching"
             },
             batches: legacyData.batches || [],
             installments: legacyData.installments || [],
@@ -116,7 +117,7 @@ export default function App() {
           userData = {
             email: auth.currentUser?.email || "adzentive@gmail.com",
             institute: {
-              instituteName: "ClassSetu Premium Coaching"
+              instituteName: "ClasSetu Premium Coaching"
             },
             batches: [],
             installments: [],
@@ -129,14 +130,14 @@ export default function App() {
       }
 
       // Map Dynamic Values
-      const instName = userData.institute?.instituteName || "ClassSetu Premium Coaching";
+      const instName = userData.institute?.instituteName || "ClasSetu Premium Coaching";
       const userEmail = userData.email || auth.currentUser?.email || "";
 
       setSettings({
         name: instName,
-        logo: "🎓",
-        address: userData.address || "",
-        contact: userData.contact || ""
+        logo: userData.settings?.logo || "🎓",
+        address: userData.settings?.address || userData.address || "",
+        contact: userData.settings?.contact || userData.contact || ""
       });
 
       setAdminUser({
@@ -304,17 +305,16 @@ export default function App() {
           if (data) {
             const subStatus = data.isSubscribed !== false && data.status !== "expired" && data.status !== "inactive" && data.status !== "EXPIRED";
             setIsSubscribed(subStatus);
-            const payAsYouGoActive = isPayAsYouGoModel(data);
             setInstituteData({
-              billingModel: payAsYouGoActive ? "PAY_AS_YOU_GO" : (data.billingModel || data.billing_model || "FIXED"),
+              billingModel: "PAY_AS_YOU_GO",
               isWhatsAppEnabled: data.isWhatsAppEnabled ?? data.isWhatsappEnabled ?? true,
               isSmsEnabled: data.isSmsEnabled ?? true,
               whatsappLimit: Number(data.whatsappLimit ?? data.whatsapp_limit ?? 0),
               whatsappSent: Number(data.whatsappSent ?? data.whatsapp_sent ?? 0),
-              whatsappLeft: payAsYouGoActive ? 999999 : Number(data.whatsappLeft ?? Math.max(0, Number(data.whatsappLimit ?? 0) - Number(data.whatsappSent ?? 0))),
+              whatsappLeft: 999999,
               smsLimit: Number(data.smsLimit ?? data.sms_limit ?? 0),
               smsSent: Number(data.smsSent ?? data.sms_sent ?? 0),
-              smsLeft: payAsYouGoActive ? 999999 : Number(data.smsLeft ?? Math.max(0, Number(data.smsLimit ?? 0) - Number(data.smsSent ?? 0)))
+              smsLeft: 999999
             });
           } else {
             setIsSubscribed(true);
@@ -1040,23 +1040,17 @@ export default function App() {
       if (instSnap.exists() && targetStudents.length > 0) {
         const instData = instSnap.data();
         const count = targetStudents.length;
-        const isPayAsYouGo = isPayAsYouGoModel(instData);
-
         if (selectedMedium === "SMS") {
-          const smsLimit = Number(instData.smsLimit ?? 0);
           const smsSent = Number(instData.smsSent ?? 0) + count;
-          const smsLeft = isPayAsYouGo ? 999999 : Math.max(0, smsLimit - smsSent);
           await updateDoc(instRef, {
             smsSent,
-            smsLeft
+            smsLeft: 999999
           });
         } else {
-          const whatsappLimit = Number(instData.whatsappLimit ?? 0);
           const whatsappSent = Number(instData.whatsappSent ?? 0) + count;
-          const whatsappLeft = isPayAsYouGo ? 999999 : Math.max(0, whatsappLimit - whatsappSent);
           await updateDoc(instRef, {
             whatsappSent,
-            whatsappLeft
+            whatsappLeft: 999999
           });
         }
       }
@@ -1180,6 +1174,13 @@ export default function App() {
       icon: "🔄" 
     },
     { 
+      id: "billing", 
+      line1: "Billing & Plans", 
+      line2: "Pay As You Go usage & ledger", 
+      line3: "WhatsApp & SMS API bills", 
+      icon: "💳" 
+    },
+    { 
       id: "reports", 
       line1: "Settings & Audits", 
       line2: "Custom branding & variables", 
@@ -1193,7 +1194,7 @@ export default function App() {
       
       {/* Real-time subscription check warning banner */}
       {isSubscribed === false && (
-        <div className="bg-gradient-to-r from-amber-550 to-orange-600 text-white font-bold px-4 py-3 text-xs text-center border-b border-orange-700 flex items-center justify-center gap-2.5 animate-pulse shadow-md z-50 sticky top-0">
+        <div className="bg-rose-900 text-white font-bold px-4 py-3 text-xs text-center border-b border-rose-950 flex items-center justify-center gap-2.5 animate-pulse shadow-md z-50 sticky top-0">
           <AlertTriangle className="w-4 h-4 text-white flex-shrink-0" />
           <span className="tracking-wide">Subscription Expired. Read-only mode is active. You can still view, search, and download your existing reports/PDFs, but adding or modifying data is frozen.</span>
         </div>
@@ -1201,8 +1202,13 @@ export default function App() {
 
       {/* Action Blocked Overlay Modal */}
       {subscriptionAlert && (
-        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-amber-100 w-full max-w-md overflow-hidden p-6 text-center space-y-4 animate-fade-in">
+        <div 
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSubscriptionAlert(null);
+          }}
+        >
+          <div className="bg-white rounded-3xl shadow-2xl border border-amber-100 w-full max-w-md overflow-hidden p-6 text-center space-y-4 animate-fade-in touch-auto select-text">
             <div className="mx-auto w-12 h-12 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center border border-amber-200">
               <AlertTriangle className="w-6 h-6" />
             </div>
@@ -1239,11 +1245,8 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-display font-black text-lg tracking-tight uppercase leading-none">
-                {settings.name || "ClassSetu"}
+                {settings.name || "ClasSetu"}
               </h1>
-              <p className="text-[10px] uppercase text-emerald-400 font-bold tracking-widest mt-0.5">
-                Institute management system
-              </p>
             </div>
           </div>
 
@@ -1476,6 +1479,15 @@ export default function App() {
              />
            )}
 
+           {activeTab === "billing" && (
+             <BillingManagerView 
+               instituteData={instituteData}
+               logs={logs}
+               settings={settings}
+               isSubscribed={isSubscribed}
+             />
+           )}
+
            {activeTab === "reports" && (
              <ReportsSettingsView 
                 teachers={teachers}
@@ -1497,7 +1509,7 @@ export default function App() {
       {/* --- SYSTEM FOOTER --- */}
       <footer className="bg-white border-t border-slate-200 mt-12 py-6 text-center text-[11px] text-slate-400">
         <div className="max-w-7xl mx-auto px-8 flex flex-col md:flex-row justify-between items-center gap-2">
-          <p>© {new Date().getFullYear()} ClassSetu Premium SaaS • Encrypted administration workspace.</p>
+          <p>© {new Date().getFullYear()} ClasSetu Premium SaaS • Encrypted administration workspace.</p>
           <div className="flex gap-4 font-semibold text-slate-400">
             <span>Server Status: Online</span>
             <span>Region: Secure Cloud</span>
@@ -1541,13 +1553,13 @@ export default function App() {
                       Sign Out of Workspace?
                     </h3>
                     <p className="text-xs font-semibold text-slate-400 mt-0.5">
-                      ClassSetu Premium Administration
+                      ClasSetu Premium Administration
                     </p>
                   </div>
                 </div>
 
                 <p className="text-sm text-slate-600 leading-relaxed mb-6">
-                  Are you sure you want to log out of <strong>{settings.name || "ClassSetu"}</strong>? Your changes and database states are safely secured and synchronized in Cloud Firestore. You will be redirected to the secure login fold.
+                  Are you sure you want to log out of <strong>{settings.name || "ClasSetu"}</strong>? Your changes and database states are safely secured and synchronized in Cloud Firestore. You will be redirected to the secure login fold.
                 </p>
 
                 {/* Confirm & Cancel Actions */}

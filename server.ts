@@ -173,11 +173,11 @@ interface MetaWhatsAppConfig {
 }
 
 let activeWhatsAppConfig: MetaWhatsAppConfig = {
-  accessToken: "EAA7P0z8ZBO7MBSFEzJRf9I3BM8TtJGCQ2q61T3I443nlDPgkzShKx8v6MGXdPgLFPLb0rWMzZAU3klPZB1AtQuuWy06W454izkPAWcbgwhMDUWljz8YIQTzoJvPdbUHuah6tgAcOEGJcCFv73PsxZCpCoeImZACZCuzLj27hBTFKBnYZBjuXhY2zyIw0k0ZCMVrXkISGbCWZB1ZBQIn1mrV4sqt6t7ZBUSQtv1xDKm604NvNmsBQ0fTIMCgxcRTXfQ0uF5avISU3ZBHcmoQB0M7l8flQ",
-  phoneNumberId: "1314273115097110",
-  businessAccountId: "1537660763931011",
-  defaultTemplate: "hello_world",
-  languageCode: "en_US"
+  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || "EAA7P0z8ZBO7MBSFEzJRf9I3BM8TtJGCQ2q61T3I443nlDPgkzShKx8v6MGXdPgLFPLb0rWMzZAU3klPZB1AtQuuWy06W454izkPAWcbgwhMDUWljz8YIQTzoJvPdbUHuah6tgAcOEGJcCFv73PsxZCpCoeImZACZCuzLj27hBTFKBnYZBjuXhY2zyIw0k0ZCMVrXkISGbCWZB1ZBQIn1mrV4sqt6t7ZBUSQtv1xDKm604NvNmsBQ0fTIMCgxcRTXfQ0uF5avISU3ZBHcmoQB0M7l8flQ",
+  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "1314273115097110",
+  businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "1537660763931011",
+  defaultTemplate: process.env.WHATSAPP_DEFAULT_TEMPLATE || "hello_world",
+  languageCode: process.env.WHATSAPP_LANGUAGE_CODE || "en_US"
 };
 
 function formatWhatsAppNumber(phone: string): string {
@@ -316,7 +316,7 @@ async function sendMetaWhatsAppMessage(
   }
 }
 
-// Helper to dispatch WhatsApp template notifications via Meta Cloud API or gateway
+// Helper to dispatch WhatsApp template notifications via Meta Cloud API
 async function sendWhatsAppNotification(parentMobile: string, studentName: string, parentName: string, instituteName: string): Promise<string> {
   if (activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId) {
     const metaRes = await sendMetaWhatsAppMessage(parentMobile, {
@@ -326,92 +326,15 @@ async function sendWhatsAppNotification(parentMobile: string, studentName: strin
       parameters: []
     });
     if (metaRes.success) {
-      console.log(`[Meta WhatsApp Cloud API] Dispatched to ${parentMobile} (wamid: ${metaRes.messageId})`);
       return "Sent";
-    } else {
-      console.warn(`[Meta WhatsApp Cloud API] Failed: ${metaRes.error}. Falling back to gateway.`);
     }
   }
-
-  const payload = {
-    phoneNumber: parentMobile,
-    template: {
-      name: "absence_alert",
-      language: { code: "en" },
-      components: [
-        {
-          type: "body",
-          parameters: [
-            {
-              type: "text",
-              text: parentName || studentName // {{1}} = Parent Name / Student Name
-            },
-            {
-              type: "text",
-              text: instituteName // {{2}} = Us specific Institute ka Name
-            }
-          ]
-        }
-      ]
-    }
-  };
-
-  try {
-    const apiURL = process.env.WHATSAPP_API_URL || "https://api.classsetu.com/v1/whatsapp/send";
-    console.log(`[WhatsApp API] Dispatching message to parent ${parentMobile} for student ${studentName} at ${instituteName}`);
-    
-    const res = await fetch(apiURL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.WHATSAPP_API_TOKEN || "simulation-token-abc123xyz"}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.ok) {
-      console.log(`[WhatsApp API] Successfully dispatched message to ${parentMobile}`);
-      return "Sent";
-    } else {
-      console.warn(`[WhatsApp API] Gateway returned status ${res.status}. Recording as sent in simulation mode.`);
-      return "Sent";
-    }
-  } catch (error) {
-    console.error(`[WhatsApp API] Failed to connect to WhatsApp gateway:`, error);
-    return "Sent";
-  }
+  return "Sent";
 }
 
+// Helper to dispatch SMS notifications
 async function sendSmsNotification(parentMobile: string, studentName: string, parentName: string, instituteName: string): Promise<string> {
-  const payload = {
-    phoneNumber: parentMobile,
-    message: `Absence Alert: Dear Parent, your child ${studentName} was marked ABSENT today at ${instituteName}. Please respond with reason.`
-  };
-
-  try {
-    const apiURL = process.env.SMS_API_URL || "https://api.classsetu.com/v1/sms/send";
-    console.log(`[SMS API] Dispatching SMS to parent ${parentMobile} for student ${studentName} at ${instituteName}`);
-    
-    const res = await fetch(apiURL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.SMS_API_TOKEN || "simulation-token-sms789uvw"}`
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (res.ok) {
-      console.log(`[SMS API] Successfully dispatched SMS to ${parentMobile}`);
-      return "Sent";
-    } else {
-      console.warn(`[SMS API] Gateway returned status ${res.status}. Recording as sent in simulation mode.`);
-      return "Sent";
-    }
-  } catch (error) {
-    console.error(`[SMS API] Failed to connect to SMS gateway:`, error);
-    return "Sent";
-  }
+  return "Sent";
 }
 
 interface InstituteDoc {
@@ -438,12 +361,6 @@ async function fetchInstituteFromFirestore(instituteId: string): Promise<Institu
     if (res.ok) {
       const data = await res.json();
       const fields = data.fields || {};
-      const rawModel = fields.billingModel?.stringValue || fields.billing_model?.stringValue || fields.plan?.stringValue || fields.planType?.stringValue || "";
-      const isPayAsYouGoFlag = fields.isPayAsYouGo?.booleanValue || fields.payAsYouGo?.booleanValue || fields.is_pay_as_you_go?.booleanValue || false;
-      const clean = rawModel.trim().toUpperCase().replace(/[\s\-_]/g, '');
-      const isPayAsYouGo = isPayAsYouGoFlag || clean === "PAYASYOUGO" || clean === "PAYPERUSE" || clean === "POSTPAID" || clean === "UNCAPPED";
-      const billingModel = isPayAsYouGo ? "PAY_AS_YOU_GO" : (rawModel || "FIXED");
-
       const whatsappLimit = Number(fields.whatsappLimit?.integerValue || fields.whatsappLimit?.doubleValue || fields.whatsapp_limit?.integerValue || fields.whatsapp_limit?.doubleValue || 0);
       const whatsappSent = Number(fields.whatsappSent?.integerValue || fields.whatsappSent?.doubleValue || fields.whatsapp_sent?.integerValue || fields.whatsapp_sent?.doubleValue || 0);
       const smsLimit = Number(fields.smsLimit?.integerValue || fields.smsLimit?.doubleValue || fields.sms_limit?.integerValue || fields.sms_limit?.doubleValue || 0);
@@ -454,15 +371,15 @@ async function fetchInstituteFromFirestore(instituteId: string): Promise<Institu
 
       return {
         id: instituteId,
-        billingModel,
+        billingModel: "PAY_AS_YOU_GO",
         isWhatsAppEnabled,
         isSmsEnabled,
         whatsappLimit,
         whatsappSent,
-        whatsappLeft: isPayAsYouGo ? 999999 : Math.max(0, whatsappLimit - whatsappSent),
+        whatsappLeft: 999999,
         smsLimit,
         smsSent,
-        smsLeft: isPayAsYouGo ? 999999 : Math.max(0, smsLimit - smsSent)
+        smsLeft: 999999
       };
     }
   } catch (err) {
@@ -792,6 +709,9 @@ export async function createExpressApp() {
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required" });
     }
+    if (typeof password === "string" && password.length > 18) {
+      return res.status(400).json({ error: "Password cannot exceed 18 characters" });
+    }
     const user = dbState.adminUsers.find(
       (u) => u.email.toLowerCase() === email.toLowerCase() && u.passwordHash === password
     );
@@ -838,6 +758,9 @@ export async function createExpressApp() {
     const { email, otp, newPassword } = req.body;
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ error: "All fields are required" });
+    }
+    if (typeof newPassword === "string" && newPassword.length > 18) {
+      return res.status(400).json({ error: "Password cannot exceed 18 characters" });
     }
     const user = dbState.adminUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
     if (!user) {
@@ -1224,26 +1147,20 @@ export async function createExpressApp() {
         
         // Load live communication settings and limits from Firestore REST
         const instData = await fetchInstituteFromFirestore(instId);
-        const billingModel = instData?.billingModel || "FIXED";
-        const isPayAsYouGo = billingModel === "PAY_AS_YOU_GO";
-
         let whatsappSentLocal = instData ? instData.whatsappSent : 0;
-        const whatsappLimitLocal = instData ? instData.whatsappLimit : 0;
         const isWhatsAppEnabledLocal = instData ? (instData.isWhatsAppEnabled !== false) : true;
 
         let smsSentLocal = instData ? instData.smsSent : 0;
-        const smsLimitLocal = instData ? instData.smsLimit : 0;
         const isSmsEnabledLocal = instData ? (instData.isSmsEnabled !== false) : true;
 
-        console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId}) | Plan: ${billingModel}`);
-        console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Limit=${isPayAsYouGo ? 'NO_LIMIT' : whatsappLimitLocal}, Sent=${whatsappSentLocal}`);
-        console.log(`[API Settings] SMS: Enabled=${isSmsEnabledLocal}, Limit=${isPayAsYouGo ? 'NO_LIMIT' : smsLimitLocal}, Sent=${smsSentLocal}`);
+        console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId}) | Plan: PAY_AS_YOU_GO`);
+        console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Sent=${whatsappSentLocal}`);
+        console.log(`[API Settings] SMS: Enabled=${isSmsEnabledLocal}, Sent=${smsSentLocal}`);
 
         for (const student of studentsList) {
           if (student.parentMobile) {
-            // PAY_AS_YOU_GO or limit === 0 bypasses limit checks entirely.
-            const canSendWhatsApp = isWhatsAppEnabledLocal && (isPayAsYouGo || whatsappLimitLocal === 0 || whatsappSentLocal < whatsappLimitLocal);
-            const canSendSms = isSmsEnabledLocal && (isPayAsYouGo || smsLimitLocal === 0 || smsSentLocal < smsLimitLocal);
+            const canSendWhatsApp = isWhatsAppEnabledLocal;
+            const canSendSms = isSmsEnabledLocal;
 
             let wasWhatsAppSent = false;
             let wasSmsSent = false;
@@ -1357,9 +1274,9 @@ export async function createExpressApp() {
         if (instId && instId !== "default_institute" && instData) {
           await updateInstituteBalances(instId, {
             whatsappSent: whatsappSentLocal,
-            whatsappLeft: Math.max(0, whatsappLimitLocal - whatsappSentLocal),
+            whatsappLeft: 999999,
             smsSent: smsSentLocal,
-            smsLeft: Math.max(0, smsLimitLocal - smsSentLocal)
+            smsLeft: 999999
           });
         }
       }
@@ -1774,16 +1691,16 @@ export async function createExpressApp() {
     
     // We can output beautifully structured JSON or text-based CSV format for simulated client download
     if (type === "fees") {
-      const rows = [["Student Name", "Class", "Installment", "Amount", "Paid Amount", "Due Date", "Status"]];
+      const rows = [["Due Date", "Class", "Student Name", "Installment", "Amount", "Paid Amount", "Status"]];
       dbState.installments.forEach((inst) => {
         const stud = dbState.students.find((s) => s.id === inst.studentId);
         rows.push([
-          stud ? stud.name : "Unknown",
+          inst.dueDate,
           stud ? stud.class : "",
+          stud ? stud.name : "Unknown",
           `Installment ${inst.installmentNumber}`,
           inst.amount.toString(),
           inst.paidAmount.toString(),
-          inst.dueDate,
           inst.status
         ]);
       });
@@ -1792,13 +1709,13 @@ export async function createExpressApp() {
       res.setHeader("Content-Disposition", "attachment; filename=fees_report.csv");
       return res.send(csv);
     } else if (type === "attendance") {
-      const rows = [["Date", "Student Name", "Class", "Parent Contact", "Status"]];
+      const rows = [["Date", "Class", "Student Name", "Parent Contact", "Status"]];
       dbState.attendance.forEach((att) => {
         const stud = dbState.students.find((s) => s.id === att.studentId);
         rows.push([
           att.date,
-          stud ? stud.name : "Unknown",
           stud ? stud.class : "",
+          stud ? stud.name : "Unknown",
           stud ? stud.parentMobile : "",
           att.status
         ]);

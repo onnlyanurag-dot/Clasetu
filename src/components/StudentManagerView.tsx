@@ -73,21 +73,35 @@ export default function StudentManagerView({
   const [isAddClassDropdownOpen, setIsAddClassDropdownOpen] = useState(false);
   const [isEditClassDropdownOpen, setIsEditClassDropdownOpen] = useState(false);
   const [isFilterClassDropdownOpen, setIsFilterClassDropdownOpen] = useState(false);
+  const [isFilterBatchDropdownOpen, setIsFilterBatchDropdownOpen] = useState(false);
+  const [isImportBatchDropdownOpen, setIsImportBatchDropdownOpen] = useState(false);
   const [isAddBatchDropdownOpen, setIsAddBatchDropdownOpen] = useState(false);
   const [isEditBatchDropdownOpen, setIsEditBatchDropdownOpen] = useState(false);
+  const [isAddPlanDropdownOpen, setIsAddPlanDropdownOpen] = useState(false);
+  const [isEditPlanDropdownOpen, setIsEditPlanDropdownOpen] = useState(false);
 
   // Dropdown Refs
   const filterClassDropdownRef = useRef<HTMLDivElement>(null);
+  const filterBatchDropdownRef = useRef<HTMLDivElement>(null);
+  const importBatchDropdownRef = useRef<HTMLDivElement>(null);
   const addClassDropdownRef = useRef<HTMLDivElement>(null);
   const editClassDropdownRef = useRef<HTMLDivElement>(null);
   const addBatchDropdownRef = useRef<HTMLDivElement>(null);
   const editBatchDropdownRef = useRef<HTMLDivElement>(null);
+  const addPlanDropdownRef = useRef<HTMLDivElement>(null);
+  const editPlanDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent | TouchEvent) {
       const target = event.target as Node;
       if (filterClassDropdownRef.current && !filterClassDropdownRef.current.contains(target)) {
         setIsFilterClassDropdownOpen(false);
+      }
+      if (filterBatchDropdownRef.current && !filterBatchDropdownRef.current.contains(target)) {
+        setIsFilterBatchDropdownOpen(false);
+      }
+      if (importBatchDropdownRef.current && !importBatchDropdownRef.current.contains(target)) {
+        setIsImportBatchDropdownOpen(false);
       }
       if (addClassDropdownRef.current && !addClassDropdownRef.current.contains(target)) {
         setIsAddClassDropdownOpen(false);
@@ -100,6 +114,12 @@ export default function StudentManagerView({
       }
       if (editBatchDropdownRef.current && !editBatchDropdownRef.current.contains(target)) {
         setIsEditBatchDropdownOpen(false);
+      }
+      if (addPlanDropdownRef.current && !addPlanDropdownRef.current.contains(target)) {
+        setIsAddPlanDropdownOpen(false);
+      }
+      if (editPlanDropdownRef.current && !editPlanDropdownRef.current.contains(target)) {
+        setIsEditPlanDropdownOpen(false);
       }
     }
 
@@ -172,7 +192,7 @@ export default function StudentManagerView({
 
   // Background scroll lock effect when any dialog modal or profile view is active
   React.useEffect(() => {
-    const isModalActive = !!isViewId || !!deleteConfirmId || !!isAddOpen || !!isEditId || !!isBulkOpen;
+    const isModalActive = !!isViewId || !!deleteConfirmId || !!isAddOpen || !!isEditId || !!isBulkOpen || isFilterClassDropdownOpen || isFilterBatchDropdownOpen;
     if (isModalActive) {
       document.body.style.overflow = "hidden";
     } else {
@@ -181,7 +201,7 @@ export default function StudentManagerView({
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isViewId, deleteConfirmId, isAddOpen, isEditId, isBulkOpen]);
+  }, [isViewId, deleteConfirmId, isAddOpen, isEditId, isBulkOpen, isFilterClassDropdownOpen, isFilterBatchDropdownOpen]);
 
   // Available standard classes in coaching institute
   const availableClasses = [
@@ -369,7 +389,7 @@ export default function StudentManagerView({
           created_at: serverTimestamp()
         });
 
-        setTransferSubmitSuccess(`स्थानांतरण अनुरोध (Transfer Request) सफलतापूर्वक भेज दिया गया है! एक बार जब वर्तमान संस्थान इसे अपने डैशबोर्ड से स्वीकृत (Approve) कर देगा, तो यह छात्र आपके डेटाबेस में आ जाएगा।`);
+        setTransferSubmitSuccess(`Transfer request has been submitted successfully! Once approved by the current institute from their dashboard, this student profile will be transferred to your database.`);
         setTransferPreviewStudent(null);
         setTransferCode("");
         setConsentChecked(false);
@@ -851,19 +871,60 @@ export default function StudentManagerView({
                 <label className="block text-xs font-bold text-slate-500 mb-2">
                   1. Target Batch Selection <span className="text-rose-500">*</span>
                 </label>
-                <select
-                  required
-                  value={selectedImportBatchId}
-                  onChange={(e) => setSelectedImportBatchId(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-slate-700 text-xs font-semibold"
-                >
-                  <option value="">-- Choose a Class Batch --</option>
-                  {batches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.targetClass || "General"}) (Capacity: {b.capacity})
-                    </option>
-                  ))}
-                </select>
+                <div className="relative" ref={importBatchDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setIsImportBatchDropdownOpen(!isImportBatchDropdownOpen)}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-700 text-xs font-semibold flex items-center justify-between cursor-pointer"
+                  >
+                    <span className="truncate">
+                      {selectedImportBatchId
+                        ? (() => {
+                            const b = batches.find((x) => x.id === selectedImportBatchId);
+                            return b ? `${b.name} (${b.targetClass || "General"})` : "-- Choose a Class Batch --";
+                          })()
+                        : "-- Choose a Class Batch --"}
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                  </button>
+
+                  {isImportBatchDropdownOpen && (
+                    <div className="absolute left-0 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto py-1 divide-y divide-slate-50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedImportBatchId("");
+                          setIsImportBatchDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                          !selectedImportBatchId ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                        }`}
+                      >
+                        <span>-- Choose a Class Batch --</span>
+                        {!selectedImportBatchId && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                      </button>
+                      {batches.map((b) => {
+                        const isSelected = selectedImportBatchId === b.id;
+                        return (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedImportBatchId(b.id);
+                              setIsImportBatchDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                              isSelected ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                            }`}
+                          >
+                            <span>{b.name} ({b.targetClass || "General"}) (Capacity: {b.capacity})</span>
+                            {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <p className="text-[11px] text-slate-400 mt-1">
                   Students will be automatically routed into this specific classroom schedule.
                 </p>
@@ -1012,54 +1073,142 @@ export default function StudentManagerView({
               </button>
               
               {isFilterClassDropdownOpen && (
-                <div className="absolute left-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto py-1 divide-y divide-slate-50">
+                <>
+                  <div 
+                    className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-40 cursor-default animate-fade-in touch-none overscroll-none select-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFilterClassDropdownOpen(false);
+                    }}
+                    onTouchMove={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onWheel={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  />
+                  <div 
+                    className="absolute left-0 mt-1 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-56 overflow-y-auto overscroll-contain touch-pan-y py-1 divide-y divide-slate-50 animate-fade-in"
+                    onClick={(e) => e.stopPropagation()}
+                    onTouchMove={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGradeFilter("");
+                        setIsFilterClassDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                        !gradeFilter ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                      }`}
+                    >
+                      <span>All Classes</span>
+                      {!gradeFilter && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                    </button>
+                    {availableClasses.map((item, index) => {
+                      const isSelected = gradeFilter === item;
+                      return (
+                        <button
+                          key={`${item}-${index}`}
+                          type="button"
+                          onClick={() => {
+                            setGradeFilter(item);
+                            setIsFilterClassDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                            isSelected ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                          }`}
+                        >
+                          <span>{item}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Batch filter */}
+            <div className="relative" ref={filterBatchDropdownRef}>
+              <button
+                type="button"
+                onClick={() => setIsFilterBatchDropdownOpen(!isFilterBatchDropdownOpen)}
+                className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 flex items-center justify-between gap-1.5 cursor-pointer max-w-[180px]"
+              >
+                <span className="truncate">
+                  {batchFilter
+                    ? (() => {
+                        const b = batches.find((x) => x.id === batchFilter);
+                        return b ? `${b.name} (${b.targetClass || "General"})` : "All Batches";
+                      })()
+                    : "All Batches"}
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              </button>
+
+              {isFilterBatchDropdownOpen && (
+                <>
+                  <div 
+                    className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-40 cursor-default animate-fade-in touch-none overscroll-none select-none"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFilterBatchDropdownOpen(false);
+                    }}
+                    onTouchMove={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onWheel={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  />
+                  <div 
+                    className="absolute left-0 mt-1 w-56 bg-white border border-slate-200 rounded-xl shadow-xl z-50 max-h-56 overflow-y-auto overscroll-contain touch-pan-y py-1 divide-y divide-slate-50 animate-fade-in"
+                    onClick={(e) => e.stopPropagation()}
+                    onTouchMove={(e) => e.stopPropagation()}
+                    onWheel={(e) => e.stopPropagation()}
+                  >
                   <button
                     type="button"
                     onClick={() => {
-                      setGradeFilter("");
-                      setIsFilterClassDropdownOpen(false);
+                      setBatchFilter("");
+                      setIsFilterBatchDropdownOpen(false);
                     }}
                     className={`w-full text-left px-4 py-2 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
-                      !gradeFilter ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                      !batchFilter ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
                     }`}
                   >
-                    <span>All Classes</span>
-                    {!gradeFilter && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                    <span>All Batches</span>
+                    {!batchFilter && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                   </button>
-                  {availableClasses.map((item, index) => {
-                    const isSelected = gradeFilter === item;
+                  {batches.map((b) => {
+                    const isSelected = batchFilter === b.id;
                     return (
                       <button
-                        key={`${item}-${index}`}
+                        key={b.id}
                         type="button"
                         onClick={() => {
-                          setGradeFilter(item);
-                          setIsFilterClassDropdownOpen(false);
+                          setBatchFilter(b.id);
+                          setIsFilterBatchDropdownOpen(false);
                         }}
                         className={`w-full text-left px-4 py-2 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
                           isSelected ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
                         }`}
                       >
-                        <span>{item}</span>
+                        <span className="truncate">{b.name} ({b.targetClass || "General"})</span>
                         {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600" />}
                       </button>
                     );
                   })}
                 </div>
-              )}
-            </div>
-
-            {/* Batch filter */}
-            <select 
-              value={batchFilter} 
-              onChange={(e) => setBatchFilter(e.target.value)}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-700"
-            >
-              <option value="">All Batches</option>
-              {batches.map((b) => (
-                <option key={b.id} value={b.id}>{b.name} ({b.targetClass || "General"})</option>
-              ))}
-            </select>
+              </>
+            )}
+          </div>
 
           </div>
         </div>
@@ -1075,14 +1224,13 @@ export default function StudentManagerView({
                 <th className="py-4 px-3">Class Level</th>
                 <th className="py-4 px-3">Parent Details</th>
                 <th className="py-4 px-3">Assigned Batch</th>
-                <th className="py-4 px-3">Subjects</th>
                 <th className="py-4 px-6 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50 text-sm">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-400">
+                  <td colSpan={5} className="text-center py-12 text-slate-400">
                     <GraduationCap className="w-12 h-12 stroke-1 text-slate-300 mx-auto mb-2" />
                     No students matched the query parameters.
                   </td>
@@ -1135,17 +1283,6 @@ export default function StudentManagerView({
                         )}
                       </td>
 
-                      {/* Subjects */}
-                      <td className="py-4 px-3 align-middle">
-                        <div className="flex flex-wrap gap-1 max-w-[160px]">
-                          { (s.subjects || []).map((sub) => (
-                            <span key={`${s.id}-${sub}`} className="bg-slate-100 text-slate-600 text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded">
-                              {sub}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-
                       {/* Actions */}
                       <td className="py-4 px-6 text-right align-middle">
                         <div className="flex items-center justify-end gap-1">
@@ -1187,8 +1324,13 @@ export default function StudentManagerView({
 
       {/* --- ADD STUDENT MODAL/SHEET (OVERLAY/POPUP) --- */}
       {isAddOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-2xl max-h-[90vh] overflow-y-auto transform scale-100 transition-all animate-fade-in">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsAddOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-2xl max-h-[88vh] overflow-y-auto transform scale-100 transition-all animate-fade-in overscroll-contain touch-auto select-text">
             <div className="bg-emerald-gradient p-6 text-white flex justify-between items-center sticky top-0 z-10">
               <div className="flex items-center gap-2">
                 <GraduationCap className="w-6 h-6" />
@@ -1386,14 +1528,49 @@ export default function StudentManagerView({
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-2">Dues Installment Plans Choice</label>
-                    <select 
-                      value={formFeesPlan} 
-                      onChange={(e) => setFormFeesPlan(e.target.value as any)}
-                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-sm font-bold text-emerald-800"
-                    >
-                      <option value="quarterly">Quarterly Plan (4 splits)</option>
-                      <option value="half-yearly">Half-Yearly Plan (2 splits)</option>
-                    </select>
+                    <div className="relative" ref={addPlanDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddPlanDropdownOpen(!isAddPlanDropdownOpen)}
+                        className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-slate-800 text-sm font-bold text-emerald-800 flex items-center justify-between cursor-pointer"
+                      >
+                        <span>
+                          {formFeesPlan === "quarterly" ? "Quarterly Plan (4 splits)" : "Half-Yearly Plan (2 splits)"}
+                        </span>
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      </button>
+
+                      {isAddPlanDropdownOpen && (
+                        <div className="absolute left-0 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 divide-y divide-slate-50">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormFeesPlan("quarterly");
+                              setIsAddPlanDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                              formFeesPlan === "quarterly" ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                            }`}
+                          >
+                            <span>Quarterly Plan (4 splits)</span>
+                            {formFeesPlan === "quarterly" && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormFeesPlan("half-yearly");
+                              setIsAddPlanDropdownOpen(false);
+                            }}
+                            className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                              formFeesPlan === "half-yearly" ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                            }`}
+                          >
+                            <span>Half-Yearly Plan (2 splits)</span>
+                            {formFeesPlan === "half-yearly" && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-slate-500 mb-2">Admission / Regist Date</label>
@@ -1432,8 +1609,13 @@ export default function StudentManagerView({
 
       {/* --- EDIT STUDENT MODAL (OVERLAY/POPUP) --- */}
       {isEditId && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-2xl max-h-[90vh] overflow-y-auto transform scale-100 transition-all animate-fade-in">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsEditId(null);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-2xl max-h-[88vh] overflow-y-auto transform scale-100 transition-all animate-fade-in overscroll-contain touch-auto select-text">
             <div className="bg-emerald-gradient p-6 text-white flex justify-between items-center sticky top-0 z-10">
               <div className="flex items-center gap-2">
                 <Edit3 className="w-5 h-5 animate-pulse" />
@@ -1580,10 +1762,49 @@ export default function StudentManagerView({
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-2">Bill Split Installment Plan</label>
-                  <select value={formFeesPlan} onChange={(e) => setFormFeesPlan(e.target.value as any)} className="w-full px-4 py-2 bg-slate-50 border rounded-xl text-slate-800 text-xs text-slate-700 font-bold">
-                    <option value="quarterly">Quarterly Plan (4 splits)</option>
-                    <option value="half-yearly">Half-Yearly Plan (2 splits)</option>
-                  </select>
+                  <div className="relative" ref={editPlanDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsEditPlanDropdownOpen(!isEditPlanDropdownOpen)}
+                      className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-slate-800 text-xs font-bold flex items-center justify-between cursor-pointer"
+                    >
+                      <span>
+                        {formFeesPlan === "quarterly" ? "Quarterly Plan (4 splits)" : "Half-Yearly Plan (2 splits)"}
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-slate-400" />
+                    </button>
+
+                    {isEditPlanDropdownOpen && (
+                      <div className="absolute left-0 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl z-40 py-1 divide-y divide-slate-50">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormFeesPlan("quarterly");
+                            setIsEditPlanDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                            formFeesPlan === "quarterly" ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                          }`}
+                        >
+                          <span>Quarterly Plan (4 splits)</span>
+                          {formFeesPlan === "quarterly" && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormFeesPlan("half-yearly");
+                            setIsEditPlanDropdownOpen(false);
+                          }}
+                          className={`w-full text-left px-4 py-2.5 hover:bg-slate-50 text-xs font-bold transition-all flex items-center justify-between cursor-pointer ${
+                            formFeesPlan === "half-yearly" ? "text-emerald-600 bg-emerald-50/20" : "text-slate-700"
+                          }`}
+                        >
+                          <span>Half-Yearly Plan (2 splits)</span>
+                          {formFeesPlan === "half-yearly" && <Check className="w-3.5 h-3.5 text-emerald-600" />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1610,8 +1831,13 @@ export default function StudentManagerView({
 
       {/* --- DETAIL PROFILE VIEW DIALOG --- */}
       {isViewId && activeViewStudent && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-4xl max-h-[90vh] overflow-y-auto transform scale-100 transition-all animate-fade-in text-slate-800">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsViewId(null);
+          }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl border border-emerald-100 w-full max-w-4xl max-h-[88vh] overflow-y-auto transform scale-100 transition-all animate-fade-in text-slate-800 overscroll-contain touch-auto select-text">
             
             <div className="bg-slate-900 text-white p-6 justify-between items-center flex sticky top-0 z-10 border-b border-slate-800">
               <div className="flex items-center gap-3">
@@ -1637,7 +1863,7 @@ export default function StudentManagerView({
                   
                   <div className="flex justify-between items-start">
                     <div>
-                      <h4 className="font-logo font-black text-sm tracking-widest text-emerald-100 uppercase">ClassSetu</h4>
+                      <h4 className="font-logo font-black text-sm tracking-widest text-emerald-100 uppercase">ClasSetu</h4>
                       <p className="text-[9px] uppercase tracking-wider text-emerald-200">Tuitions ID Card</p>
                     </div>
                     <span className="bg-white/20 text-white font-mono text-[9px] px-2 py-0.5 rounded-full uppercase tracking-widest">
@@ -1697,10 +1923,10 @@ export default function StudentManagerView({
                 <div className="pt-2 pb-1 space-y-2">
                   <div className="bg-indigo-50/50 border border-indigo-100/60 rounded-2xl p-4 text-xs space-y-1.5">
                     <p className="font-bold text-indigo-900 flex items-center gap-1.5">
-                      <span>🔄</span> स्थानांतरण प्रणाली (Transfer System)
+                      <span>🔄</span> Student Transfer Protocol
                     </p>
                     <p className="text-slate-600 leading-relaxed">
-                      इस छात्र को अन्य संस्थान में स्थानांतरित करने के लिए केवल उनका <strong className="text-indigo-800">Unique Code</strong> ({activeViewStudent.id}) उनके साथ साझा करें। वे अपने डैशबोर्ड से अनुरोध (Transfer Request) भेजेंगे, जिसे आप अपने डैशबोर्ड पर स्वीकृत (Approve) कर सकते हैं।
+                      To transfer this student to another institute, share their <strong className="text-indigo-800">Unique Code</strong> ({activeViewStudent.id}). They can initiate a transfer request from their dashboard, which you can approve in your transfer requests center.
                     </p>
                   </div>
                 </div>
@@ -1893,8 +2119,13 @@ export default function StudentManagerView({
         const studentToDelete = students.find(s => s.id === deleteConfirmId);
         if (!studentToDelete) return null;
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl border border-rose-100 w-full max-w-md overflow-hidden transform scale-100 transition-all animate-fade-in text-center p-6 space-y-4">
+          <div 
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setDeleteConfirmId(null);
+            }}
+          >
+            <div className="bg-white rounded-2xl shadow-2xl border border-rose-100 w-full max-w-md overflow-hidden transform scale-100 transition-all animate-fade-in text-center p-6 space-y-4 touch-auto select-text">
               <div className="mx-auto w-12 h-12 bg-rose-50 text-rose-600 rounded-full flex items-center justify-center">
                 <AlertTriangle className="w-6 h-6 text-rose-600 animate-bounce" />
               </div>
@@ -1937,8 +2168,13 @@ export default function StudentManagerView({
 
       {/* Secure Student Transfer Handshake Preview Dialog */}
       {isTransferModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-indigo-100 w-full max-w-lg overflow-hidden transform scale-100 transition-all animate-fade-in flex flex-col max-h-[90vh]">
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 select-none touch-none overscroll-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsTransferModalOpen(false);
+          }}
+        >
+          <div className="bg-white rounded-3xl shadow-2xl border border-indigo-100 w-full max-w-lg overflow-hidden transform scale-100 transition-all animate-fade-in flex flex-col max-h-[88vh] overscroll-contain touch-auto select-text">
             {/* Header */}
             <div className="bg-indigo-600 text-white p-6 flex justify-between items-center shrink-0">
               <div className="flex items-center gap-2">
@@ -1967,7 +2203,7 @@ export default function StudentManagerView({
                 /* Form for Unique Code */
                 <form onSubmit={handleFetchTransferPreview} className="space-y-4">
                   <p className="text-xs text-slate-500 leading-relaxed">
-                    विद्यार्थी का Unique Admission Code दर्ज़ करें। यदि वह पूर्व अकैडमिक सेशन का आर्काइव्ड (Deleted) छात्र है, तो बिना PIN के सीधे ट्रांसफर हो जाएगा। सक्रिय (Active) छात्रों के लिए स्थानांतरण अनुरोध (Transfer Request) भेजा जाएगा।
+                    Enter the student's Unique Admission Code. If the student was archived during a prior session reset, they can be enrolled directly without a PIN. For active students, a transfer request will be sent to the current institute.
                   </p>
                   
                   {transferPreviewError && (
@@ -2013,8 +2249,8 @@ export default function StudentManagerView({
                     <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex items-start gap-3">
                       <div className="p-1 bg-amber-100 text-amber-800 rounded-lg shrink-0 text-sm">⚠️</div>
                       <div className="text-xs text-amber-850 space-y-1">
-                        <p className="font-bold">सत्र अंत (Master Reset) अभिलेख पाया गया</p>
-                        <p className="leading-relaxed">यह छात्र वर्तमान में आर्काइव्ड / सॉफ्ट-डिलीटेड है। हाइब्रिड नियमों के तहत, बिना किसी PIN या OTP के इसे सीधे नए अकैडमिक बैच में पुनः नामांकित किया जा सकता है।</p>
+                        <p className="font-bold">Prior Session Reset Record Detected</p>
+                        <p className="leading-relaxed">This student profile was previously archived during a master session reset. Under session transition rules, this record can be re-enrolled directly without OTP verification.</p>
                       </div>
                     </div>
                   )}
@@ -2080,7 +2316,7 @@ export default function StudentManagerView({
                         className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                       />
                       <span className="text-[11px] font-medium text-slate-700 leading-relaxed">
-                        I confirm that the parent is present and consents to this transfer. (मैं पुष्टि करता/करती हूँ कि अभिभावक उपस्थित हैं और इस स्थानांतरण के लिए सहमत हैं।)
+                        I confirm that the parent is present and has authorized this academic enrollment transfer.
                       </span>
                     </label>
                   )}
