@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Users, 
   Layers, 
@@ -10,7 +10,6 @@ import {
   AlertTriangle
 } from "lucide-react";
 import { 
-  ResponsiveContainer, 
   BarChart, 
   Bar, 
   XAxis, 
@@ -53,6 +52,24 @@ export default function DashboardView({
   onApproveRequest,
   onRejectRequest
 }: DashboardViewProps) {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
+    const updateWidth = () => {
+      if (chartContainerRef.current) {
+        const w = chartContainerRef.current.clientWidth;
+        if (w > 0) {
+          setChartWidth(w);
+        }
+      }
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(chartContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
   
   const activeStudents = students.filter(s => s.status === "active").length;
   const totalBatches = batches.length;
@@ -422,9 +439,9 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={collectionTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <div ref={chartContainerRef} className="h-72 w-full min-w-0" style={{ height: "288px", minHeight: "288px", width: "100%" }}>
+            {chartWidth > 0 ? (
+              <BarChart width={chartWidth} height={288} data={collectionTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} />
                 <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
@@ -435,7 +452,11 @@ export default function DashboardView({
                 <Bar dataKey="Collected" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={30} />
                 <Bar dataKey="Pending" name="Outstanding" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={30} />
               </BarChart>
-            </ResponsiveContainer>
+            ) : (
+              <div className="h-full w-full flex items-center justify-center text-xs text-slate-400">
+                Loading analytics...
+              </div>
+            )}
           </div>
         </div>
 
