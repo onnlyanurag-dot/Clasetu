@@ -207,20 +207,26 @@ export default function App() {
       });
       setStudents(studentRecords);
 
-      // Load active registered teachers
+      // Load active registered teachers belonging strictly to the current admin/institute
       try {
         const teachersQuery = query(collection(db, "teachers"));
         const teachersSnap = await getDocs(teachersQuery);
-        const currentUserEmail = auth.currentUser?.email || "";
+        const currentUserEmail = (auth.currentUser?.email || "").trim().toLowerCase();
+        const currentUid = auth.currentUser?.uid || uid;
         const teacherRecords: Teacher[] = [];
         teachersSnap.forEach((tSnap) => {
           const data = tSnap.data();
-          const createdBy = data.createdByAdminEmail;
+          const createdByEmail = (data.createdByAdminEmail || "").trim().toLowerCase();
+          const teacherInstituteId = (data.instituteId || data.createdByAdminUid || "").trim();
           
-          // Secure filter mapping:
-          // 1. If it has the new field, match it strictly against current admin email
-          // 2. Fallback for old teachers: if no admin email is set yet, allow it (legacy fallback)
-          if (createdBy && createdBy !== currentUserEmail) {
+          // Strict multi-tenant isolation:
+          // A teacher must belong explicitly to the logged-in administrator.
+          // Never allow unowned or foreign teachers to bleed into other accounts or new accounts.
+          const isOwnedByCurrentAdmin = 
+            (teacherInstituteId && currentUid && teacherInstituteId === currentUid) ||
+            (createdByEmail && currentUserEmail && createdByEmail === currentUserEmail);
+          
+          if (!isOwnedByCurrentAdmin) {
             return;
           }
           
@@ -230,7 +236,9 @@ export default function App() {
             email: data.email || "",
             role: data.role || "teacher",
             createdAt: data.createdAt || "",
-            createdByAdminEmail: createdBy || ""
+            createdByAdminEmail: data.createdByAdminEmail || "",
+            createdByAdminUid: teacherInstituteId,
+            instituteId: teacherInstituteId
           });
         });
         setTeachers(teacherRecords);
@@ -1084,6 +1092,8 @@ export default function App() {
   // Reset all student data locally on complete academic season clear
   const handleResetAllStudentData = () => {
     setStudents([]);
+    setInstallments([]);
+    setAttendance([]);
   };
 
   const handleAddTeacherState = (newTeacher: Teacher) => {

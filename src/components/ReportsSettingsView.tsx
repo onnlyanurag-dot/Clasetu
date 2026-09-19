@@ -100,7 +100,6 @@ export default function ReportsSettingsView({
   const [attendanceDocs, setAttendanceDocs] = useState<RootAttendanceDoc[]>([]);
   const [fetchingDocs, setFetchingDocs] = useState(false);
   const [fetchError, setFetchError] = useState("");
-  const [seeding, setSeeding] = useState(false);
 
   const [selectedBatchId, setSelectedBatchId] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>("");
@@ -247,55 +246,6 @@ export default function ReportsSettingsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const handleCreateSampleReport = async () => {
-    const user = auth.currentUser;
-    if (!user) return;
-    setSeeding(true);
-    try {
-      const selectedBatch = batches[0] || { id: "hindi-101", name: "Hindi (03:00 PM - 05:00 PM)" };
-      
-      const sampleRecords = students
-        .filter((s) => s.batchId === selectedBatch.id)
-        .map((s) => ({
-          studentId: s.id,
-          studentName: s.name,
-          status: Math.random() > 0.20 ? ("Present" as const) : ("Absent" as const)
-        }));
-
-      if (sampleRecords.length === 0) {
-        sampleRecords.push(
-          { studentId: "STD-2026-P6AE9D", studentName: "Annya Sharma", status: "Present" },
-          { studentId: "STD-2026-F98AA2", studentName: "Rohan Verma", status: "Absent" },
-          { studentId: "STD-2026-B11C3D", studentName: "Sanya Roy", status: "Present" }
-        );
-      }
-
-      const todayStr = new Date().toISOString().split("T")[0];
-
-      const attendanceRef = collection(db, "attendance");
-      await addDoc(attendanceRef, {
-        instituteId: user.uid,
-        batchId: selectedBatch.id,
-        batchName: selectedBatch.name,
-        date: todayStr,
-        records: sampleRecords,
-        createdAt: new Date().toISOString()
-      });
-
-      await loadHistoricalAttendance();
-      
-      // select them
-      setSelectedBatchId(selectedBatch.id);
-      setSelectedDate(todayStr);
-
-    } catch (err: any) {
-      console.error("Failed to seed sample report:", err);
-      alert("Seeding failed: " + err.message);
-    } finally {
-      setSeeding(false);
-    }
   };
 
   // Settings edit state
@@ -473,8 +423,9 @@ export default function ReportsSettingsView({
       setDeleteError("Please confirm backup verification by checking the checkbox.");
       return;
     }
-    if (deleteConfirmationText !== "DELETE ALL") {
-      setDeleteError("Please type 'DELETE ALL' exactly to confirm execution.");
+    const isConfirmed = deleteConfirmationText.trim().replace(/\s+/g, " ").toUpperCase() === "DELETE ALL";
+    if (!isConfirmed) {
+      setDeleteError("Please type 'DELETE ALL' to confirm execution.");
       return;
     }
     setIsDeleting(true);
@@ -489,17 +440,60 @@ export default function ReportsSettingsView({
       const studentsQuery = query(collection(db, "students"), where("instituteId", "==", user.uid));
       const studentsSnap = await getDocs(studentsQuery);
       
-      const batch = writeBatch(db);
-      let count = 0;
+      const studentDocIds = new Set<string>();
       for (const studentDoc of studentsSnap.docs) {
-        batch.update(doc(db, "students", studentDoc.id), {
-          deleted_status: 1
-        });
-        count++;
+        studentDocIds.add(studentDoc.id);
       }
-      
-      if (count > 0) {
-        await batch.commit();
+      for (const s of students) {
+        if (s.id) {
+          studentDocIds.add(s.id);
+        }
+      }
+
+      if (studentDocIds.size > 0) {
+        const chunks: string[][] = [];
+        const allIds = Array.from(studentDocIds);
+        for (let i = 0; i < allIds.length; i += 400) {
+          chunks.push(allIds.slice(i, i + 400));
+        }
+        for (const chunk of chunks) {
+          const batch = writeBatch(db);
+          for (const sid of chunk) {
+            batch.update(doc(db, "students", sid), {
+              deleted_status: 1
+            });
+          }
+          await batch.commit();
+        }
+      }
+
+      // Reset installments and attendance in users document so fees trend and attendance clear completely
+      const userDocRef = doc(db, "users", user.uid);
+      await updateDoc(userDocRef, {
+        installments: [],
+        attendance: []
+      });
+
+      // Clear attendance collection records for this institute
+      try {
+        const attendanceQuery = query(collection(db, "attendance"), where("instituteId", "==", user.uid));
+        const attendanceSnap = await getDocs(attendanceQuery);
+        if (!attendanceSnap.empty) {
+          const attChunks: string[][] = [];
+          const allAttIds = attendanceSnap.docs.map(d => d.id);
+          for (let i = 0; i < allAttIds.length; i += 400) {
+            attChunks.push(allAttIds.slice(i, i + 400));
+          }
+          for (const chunk of attChunks) {
+            const attBatch = writeBatch(db);
+            for (const docId of chunk) {
+              attBatch.delete(doc(db, "attendance", docId));
+            }
+            await attBatch.commit();
+          }
+        }
+      } catch (attErr) {
+        console.warn("Could not batch clear attendance collection:", attErr);
       }
 
       // Reset states locally in App.tsx using prop callback
@@ -548,13 +542,17 @@ export default function ReportsSettingsView({
 
       const docRef = doc(db, "teachers", teacherUid);
       const timestamp = new Date().toISOString();
+      const currentAdminEmail = (auth.currentUser?.email || "").trim().toLowerCase();
+      const currentAdminUid = auth.currentUser?.uid || "";
       const teacherPayload = {
         name: tName.trim(),
         email: tEmail.trim().toLowerCase(),
         password: tPassword,
         role: "TEACHER",
         createdAt: timestamp,
-        createdByAdminEmail: auth.currentUser?.email || ""
+        createdByAdminEmail: currentAdminEmail,
+        createdByAdminUid: currentAdminUid,
+        instituteId: currentAdminUid
       };
 
       await setDoc(docRef, teacherPayload);
@@ -841,26 +839,10 @@ export default function ReportsSettingsView({
                   <h4 className="font-bold text-slate-700 text-sm">No historical attendance records matches selection</h4>
                   <p className="text-xs text-slate-450 max-w-md mx-auto mt-1 leading-relaxed">
                     {attendanceDocs.length === 0 
-                      ? "No records found in the 'attendance' collection yet. If you haven't taken registers, you can quickly seed a simulated session to Firestore using the action below." 
+                      ? "No records found in the 'attendance' collection yet. When attendance is marked from the Attendance section, registers will appear here." 
                       : "Please select an available Batch and Date combination from the dropdown filters above to load marked student rosters."}
                   </p>
                 </div>
-
-                {attendanceDocs.length === 0 && (
-                  <button
-                    onClick={handleCreateSampleReport}
-                    disabled={seeding}
-                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 px-5 rounded-xl text-xs uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {seeding ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" /> Seeding Firestore...
-                      </>
-                    ) : (
-                      "🧪 Generate Sample Report to Firestore"
-                    )}
-                  </button>
-                )}
 
                 {attendanceDocs.length > 0 && (
                   <div className="w-full max-w-md pt-4 text-left">
@@ -1761,9 +1743,18 @@ export default function ReportsSettingsView({
                 </span>
               </label>
 
-              <p className="pt-2">
-                Type <span className="font-bold text-slate-850 font-mono bg-slate-100 px-1.5 py-0.5 rounded">DELETE ALL</span> in the box below to proceed:
-              </p>
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-[11px] text-slate-600">
+                  Type <span className="font-bold text-slate-800 font-mono bg-slate-100 px-1.5 py-0.5 rounded">DELETE ALL</span> in the box below:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmationText("DELETE ALL")}
+                  className="text-[10px] font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded-lg border border-rose-200 transition-colors cursor-pointer"
+                >
+                  Quick Fill
+                </button>
+              </div>
             </div>
 
             {deleteError && (
@@ -1773,10 +1764,20 @@ export default function ReportsSettingsView({
             <input
               type="text"
               value={deleteConfirmationText}
-              onChange={(e) => setDeleteConfirmationText(e.target.value)}
+              onChange={(e) => setDeleteConfirmationText(e.target.value.toUpperCase())}
               placeholder="Type DELETE ALL here..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-rose-500 focus:border-rose-500 outline-none font-mono text-center tracking-widest uppercase font-bold"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:ring-1 focus:ring-rose-500 focus:border-rose-500 outline-none font-mono text-center tracking-widest uppercase font-bold"
             />
+
+            {deleteConfirmationText.trim().replace(/\s+/g, " ").toUpperCase() === "DELETE ALL" ? (
+              <p className="text-[11px] text-emerald-600 font-bold flex items-center justify-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Text matched! Click Confirm Reset below.
+              </p>
+            ) : deleteConfirmationText.length > 0 ? (
+              <p className="text-[10px] text-amber-600 text-center font-medium">
+                Type <strong>DELETE ALL</strong> or click Quick Fill above
+              </p>
+            ) : null}
 
             <div className="flex gap-2 pt-2">
               <button
@@ -1795,8 +1796,8 @@ export default function ReportsSettingsView({
               <button
                 type="button"
                 onClick={handlePermanentlyResetSystem}
-                disabled={isDeleting || !isBackupVerified || deleteConfirmationText !== "DELETE ALL"}
-                className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white font-bold py-2 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                disabled={isDeleting || !isBackupVerified || deleteConfirmationText.trim().replace(/\s+/g, " ").toUpperCase() !== "DELETE ALL"}
+                className="flex-1 bg-rose-600 hover:bg-rose-700 disabled:bg-rose-200 disabled:text-rose-400 disabled:cursor-not-allowed text-white font-bold py-2 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
               >
                 {isDeleting ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />

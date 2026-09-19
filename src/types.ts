@@ -64,6 +64,8 @@ export interface Teacher {
   role: "teacher" | "TEACHER" | string;
   createdAt: string;
   createdByAdminEmail?: string;
+  createdByAdminUid?: string;
+  instituteId?: string;
   password?: string;
 }
 

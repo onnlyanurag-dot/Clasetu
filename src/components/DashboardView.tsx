@@ -74,28 +74,38 @@ export default function DashboardView({
   const activeStudents = students.filter(s => s.status === "active").length;
   const totalBatches = batches.length;
 
+  const activeStudentIds = new Set(
+    students
+      .filter(s => s.status === "active" || (!s.status && !s.deleted_status))
+      .map(s => s.id)
+  );
+
+  const activeInstallments = installments.filter(inst => activeStudentIds.has(inst.studentId));
+
   // Calculate outstanding fees and revenue
-  const totalCollected = installments.reduce((sum, inst) => sum + inst.paidAmount, 0);
-  const totalPending = installments.reduce((sum, inst) => {
+  const totalCollected = activeInstallments.reduce((sum, inst) => sum + inst.paidAmount, 0);
+  const totalPending = activeInstallments.reduce((sum, inst) => {
     if (inst.status !== "Paid") {
       return sum + (inst.amount - inst.paidAmount);
     }
     return sum;
   }, 0);
 
-  // Present ratio today or last recorded date
-  const latestDate = attendance.length > 0 
-    ? [...new Set(attendance.map(a => a.date))].sort((a, b) => b.localeCompare(a))[0]
+  const activeAttendance = attendance.filter(a => activeStudentIds.has(a.studentId));
+
+  // Present ratio today or last recorded date for active students
+  const latestDate = activeAttendance.length > 0 
+    ? [...new Set(activeAttendance.map(a => a.date))].sort((a, b) => b.localeCompare(a))[0]
     : null;
 
   const todayAttendanceRecords = latestDate 
-    ? attendance.filter(a => a.date === latestDate)
+    ? activeAttendance.filter(a => a.date === latestDate)
     : [];
 
   const presentCount = todayAttendanceRecords.filter(r => r.status === "Present").length;
   const attendanceRatio = todayAttendanceRecords.length > 0
     ? Math.round((presentCount / todayAttendanceRecords.length) * 100)
-    : 100;
+    : 0;
 
   // Chart Data: Fees Collection Trends (Realtime collected by payment month, outstanding by due month)
   const monthlyData: { [key: string]: { name: string; sortKey: string; Collected: number; Pending: number } } = {};
@@ -157,7 +167,7 @@ export default function DashboardView({
     }
   };
 
-  installments.forEach(inst => {
+  activeInstallments.forEach(inst => {
     // 1. Process Collected Amount (realtime payment month base)
     if (inst.paidAmount > 0) {
       const paymentDate = inst.paymentDate || inst.dueDate;
@@ -376,7 +386,7 @@ export default function DashboardView({
                 {attendanceRatio}%
               </h3>
               <p className="text-xs text-slate-500 mt-1 font-semibold">
-                {latestDate ? `Record: ${latestDate}` : "No matches today"}
+                {latestDate ? `Record: ${latestDate}` : "No records yet"}
               </p>
             </div>
             <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600">
