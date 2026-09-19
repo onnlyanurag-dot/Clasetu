@@ -1507,6 +1507,8 @@ export default function App() {
                onUpdateSettings={handleUpdateSettings}
                batches={batches}
                students={students}
+               installments={installments}
+               attendance={attendance}
                 onResetAllStudentData={handleResetAllStudentData}
                 isSubscribed={isSubscribed}
                 onSubscriptionBlocked={() => setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.")}

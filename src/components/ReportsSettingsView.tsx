@@ -19,7 +19,7 @@ import {
   Download,
   Upload
 } from "lucide-react";
-import { InstituteSettings, Teacher, Student, Batch } from "../types";
+import { InstituteSettings, Teacher, Student, Batch, FeeInstallment, AttendanceRecord } from "../types";
 import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, writeBatch } from "firebase/firestore";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { auth, secondaryAuth, db } from "../firebase";
@@ -32,6 +32,8 @@ interface ReportsSettingsViewProps {
   onDeleteTeacherState?: (id: string) => void;
   batches: Batch[];
   students: Student[];
+  installments?: FeeInstallment[];
+  attendance?: AttendanceRecord[];
   onResetAllStudentData?: () => void;
   isSubscribed?: boolean;
   onSubscriptionBlocked?: () => void;
@@ -75,6 +77,8 @@ export default function ReportsSettingsView({
   onDeleteTeacherState,
   batches = [],
   students = [],
+  installments = [],
+  attendance = [],
   onResetAllStudentData,
   isSubscribed = true,
   onSubscriptionBlocked
@@ -237,7 +241,7 @@ export default function ReportsSettingsView({
       ...rows.map((row) => row.join(","))
     ].join("\n");
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
@@ -246,6 +250,7 @@ export default function ReportsSettingsView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   // Settings edit state
@@ -597,8 +602,255 @@ export default function ReportsSettingsView({
     }
   };
 
+  const triggerCSVDownload = (fileName: string, csvRows: (string | number)[][]) => {
+    const csvContent = csvRows
+      .map((row) => {
+        if (row.length === 0) return "";
+        return row.map((val) => `"${String(val ?? "").replace(/"/g, '""')}"`).join(",");
+      })
+      .join("\n");
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", fileName);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const handleDownloadCSV = (type: "attendance" | "fees" | "general") => {
-    window.open(`/api/reports/download?type=${type}`, "_blank");
+    try {
+      const sanitizedInstName = (settings.name || "institute").toLowerCase().replace(/[^a-zA-Z0-9_-]/g, "_");
+      const todayStr = new Date().toISOString().split("T")[0];
+      const activeStudents = (students || []).filter((s) => s.deleted_status !== 1);
+      const studentMap = new Map(activeStudents.map((s) => [s.id, s]));
+      const batchMap = new Map((batches || []).map((b) => [b.id, b]));
+
+      if (type === "attendance") {
+        const rows: (string | number)[][] = [
+          ["Date", "Student ID", "Student Name", "Class / Grade", "Batch", "Parent Name", "Parent WhatsApp Mobile", "Attendance Status"]
+        ];
+
+        if (attendanceDocs && attendanceDocs.length > 0) {
+          const sortedDocs = [...attendanceDocs].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+          sortedDocs.forEach((docItem) => {
+            const docDate = docItem.date || todayStr;
+            const batchName = docItem.batchName || batchMap.get(docItem.batchId)?.name || "Unassigned";
+            (docItem.records || []).forEach((rec) => {
+              const student = studentMap.get(rec.studentId);
+              const studentName = rec.studentName || student?.name || "Student " + rec.studentId;
+              const studentClass = student?.class || student?.grade || "-";
+              const parentName = student?.parentName || "-";
+              const parentMobile = student?.parentMobile || "-";
+              rows.push([
+                docDate,
+                rec.studentId,
+                studentName,
+                studentClass,
+                batchName,
+                parentName,
+                parentMobile,
+                rec.status
+              ]);
+            });
+          });
+        } else if (attendance && attendance.length > 0) {
+          const sortedAttendance = [...attendance].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+          sortedAttendance.forEach((rec) => {
+            const student = studentMap.get(rec.studentId);
+            const studentName = student?.name || "Student " + rec.studentId;
+            const studentClass = student?.class || student?.grade || "-";
+            const batchName = student?.batchId ? (batchMap.get(student.batchId)?.name || "Unassigned") : "Unassigned";
+            const parentName = student?.parentName || "-";
+            const parentMobile = student?.parentMobile || "-";
+            rows.push([
+              rec.date || todayStr,
+              rec.studentId,
+              studentName,
+              studentClass,
+              batchName,
+              parentName,
+              parentMobile,
+              rec.status
+            ]);
+          });
+        } else {
+          rows.push([todayStr, "-", "No attendance records recorded yet", "-", "-", "-", "-", "-"]);
+        }
+
+        triggerCSVDownload(`${sanitizedInstName}_daily_attendance_audit_${todayStr}.csv`, rows);
+        setSuccess("Daily Attendance Audit Log exported successfully!");
+        setTimeout(() => setSuccess(""), 4000);
+
+      } else if (type === "fees") {
+        const rows: (string | number)[][] = [
+          [
+            "Student ID",
+            "Student Name",
+            "Class / Grade",
+            "Batch Name",
+            "Parent WhatsApp Mobile",
+            "Parent Name",
+            "Fee Plan",
+            "Installment #",
+            "Due Date",
+            "Installment Amount (INR)",
+            "Paid Amount (INR)",
+            "Outstanding Balance (INR)",
+            "Payment Status",
+            "Payment Date"
+          ]
+        ];
+
+        const activeInstallments = (installments || []).filter((inst) => studentMap.has(inst.studentId));
+
+        if (activeStudents.length === 0) {
+          rows.push(["-", "No active students enrolled in current session", "-", "-", "-", "-", "-", "-", "-", 0, 0, 0, "-", "-"]);
+        } else {
+          activeStudents.forEach((student) => {
+            const studentInsts = activeInstallments
+              .filter((i) => i.studentId === student.id)
+              .sort((a, b) => a.installmentNumber - b.installmentNumber);
+
+            const studentBatch = student.batchId ? (batchMap.get(student.batchId)?.name || "Unassigned") : "Unassigned";
+            const studentClass = student.class || student.grade || "N/A";
+
+            if (studentInsts.length > 0) {
+              studentInsts.forEach((inst) => {
+                const balance = Math.max(0, (inst.amount || 0) - (inst.paidAmount || 0));
+                let statusLabel = inst.status;
+                if (balance === 0 && (inst.amount || 0) > 0) {
+                  statusLabel = "Paid";
+                } else if (inst.paidAmount > 0) {
+                  statusLabel = "Partially Paid";
+                } else {
+                  statusLabel = "Unpaid";
+                }
+
+                rows.push([
+                  student.id,
+                  student.name,
+                  studentClass,
+                  studentBatch,
+                  student.parentMobile || "N/A",
+                  student.parentName || "N/A",
+                  student.feesPlan || "quarterly",
+                  `Installment ${inst.installmentNumber}`,
+                  inst.dueDate || "-",
+                  inst.amount || 0,
+                  inst.paidAmount || 0,
+                  balance,
+                  statusLabel,
+                  inst.paymentDate || (inst.paidAmount > 0 ? inst.dueDate : "-")
+                ]);
+              });
+            } else {
+              const feeAmt = student.totalFees || student.feesAmount || 0;
+              rows.push([
+                student.id,
+                student.name,
+                studentClass,
+                studentBatch,
+                student.parentMobile || "N/A",
+                student.parentName || "N/A",
+                student.feesPlan || "Full / Lump sum",
+                "Standard Total",
+                "-",
+                feeAmt,
+                0,
+                feeAmt,
+                "Pending Setup",
+                "-"
+              ]);
+            }
+          });
+        }
+
+        triggerCSVDownload(`${sanitizedInstName}_term_dues_payment_roster_${todayStr}.csv`, rows);
+        setSuccess("Term Dues & Payment Status Roster exported successfully!");
+        setTimeout(() => setSuccess(""), 4000);
+
+      } else {
+        // General Institute Revenue Ledger
+        const activeInstallments = (installments || []).filter((inst) => studentMap.has(inst.studentId));
+        
+        const totalBilled = activeInstallments.length > 0
+          ? activeInstallments.reduce((sum, inst) => sum + (inst.amount || 0), 0)
+          : activeStudents.reduce((sum, s) => sum + (s.totalFees || s.feesAmount || 0), 0);
+        const totalCollected = activeInstallments.reduce((sum, inst) => sum + (inst.paidAmount || 0), 0);
+        const totalPending = Math.max(0, totalBilled - totalCollected);
+        const recoveryRatio = totalBilled > 0 ? Math.round((totalCollected / totalBilled) * 100) : 100;
+
+        const rows: (string | number)[][] = [
+          ["=== EXECUTIVE INSTITUTE AUDIT SUMMARY ==="],
+          ["Institute Name", settings.name || "ClasSetu Coaching"],
+          ["Generated Date", new Date().toLocaleString("en-IN")],
+          ["Institute Address", settings.address || "N/A"],
+          ["Official Contact", settings.contact || "N/A"],
+          ["Total Active Students", activeStudents.length],
+          ["Total Defined Batches", (batches || []).length],
+          ["Total Teaching Staff", (teachers || []).length],
+          ["Total Revenue Billed (INR)", totalBilled],
+          ["Total Revenue Realized / Collected (INR)", totalCollected],
+          ["Total Outstanding Pending Fees (INR)", totalPending],
+          ["Fee Collection Recovery Ratio", `${recoveryRatio}%`],
+          [],
+          ["=== ACTIVE BATCHES DIRECTORY ==="],
+          ["Batch ID", "Batch Name", "Timings", "Max Capacity", "Assigned Students Count", "Target Class"],
+          ...(batches || []).map((b) => {
+            const count = activeStudents.filter((s) => s.batchId === b.id).length;
+            return [
+              b.id,
+              b.name,
+              `${b.startTime} - ${b.endTime}`,
+              b.capacity || 0,
+              count,
+              b.targetClass || b.targetGrade || b.class || "All Grades"
+            ];
+          }),
+          [],
+          ["=== STUDENT-BY-STUDENT FINANCIAL & REGISTRATION ROSTER ==="],
+          ["Student ID", "Student Name", "Class / Grade", "Assigned Batch", "Admission Date", "Parent WhatsApp Contact", "Total Fee Plan (INR)", "Total Paid (INR)", "Pending Dues (INR)", "Overall Status"],
+          ...activeStudents.map((s) => {
+            const studentInsts = activeInstallments.filter((i) => i.studentId === s.id);
+            const studentBilled = studentInsts.length > 0
+              ? studentInsts.reduce((sum, i) => sum + (i.amount || 0), 0)
+              : (s.totalFees || s.feesAmount || 0);
+            const studentPaid = studentInsts.reduce((sum, i) => sum + (i.paidAmount || 0), 0);
+            const studentPending = Math.max(0, studentBilled - studentPaid);
+            const batchName = s.batchId ? (batchMap.get(s.batchId)?.name || "Unassigned") : "Unassigned";
+
+            return [
+              s.id,
+              s.name,
+              s.class || s.grade || "N/A",
+              batchName,
+              s.admissionDate || "N/A",
+              s.parentMobile || "N/A",
+              studentBilled,
+              studentPaid,
+              studentPending,
+              studentPending === 0 ? "Settled" : (studentPaid > 0 ? "Partially Paid" : "Unpaid")
+            ];
+          })
+        ];
+
+        if (activeStudents.length === 0) {
+          rows.push(["-", "No active students enrolled", "-", "-", "-", "-", 0, 0, 0, "-"]);
+        }
+
+        triggerCSVDownload(`${sanitizedInstName}_general_revenue_ledger_${todayStr}.csv`, rows);
+        setSuccess("General Institute Revenue Ledger exported successfully!");
+        setTimeout(() => setSuccess(""), 4000);
+      }
+    } catch (err: any) {
+      console.error("Error generating CSV download:", err);
+      alert("Failed to export CSV: " + (err.message || "Unknown error"));
+    }
   };
 
   return (
