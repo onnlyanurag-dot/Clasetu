@@ -1,0 +1,73 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // 1. User Profiles & Institute Settings
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // 2. Institutes & Subcollections
+    match /institutes/{instituteId} {
+      allow read, write: if isOwner(instituteId);
+
+      match /{allChildren=**} {
+        allow read, write: if isOwner(instituteId);
+      }
+    }
+
+    // 3. Students Collection
+    match /students/{studentId} {
+      allow read, write: if isSignedIn() && (
+        resource == null || 
+        resource.data.instituteId == request.auth.uid || 
+        request.resource.data.instituteId == request.auth.uid
+      );
+    }
+
+    // 4. Attendance Records
+    match /attendance/{attendanceId} {
+      allow read, write: if isSignedIn() && (
+        resource == null || 
+        resource.data.instituteId == request.auth.uid || 
+        request.resource.data.instituteId == request.auth.uid
+      );
+    }
+
+    // 5. Teachers Management
+    match /teachers/{teacherId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (
+        resource == null || 
+        resource.data.createdByAdminUid == request.auth.uid || 
+        resource.data.instituteId == request.auth.uid ||
+        request.resource.data.createdByAdminUid == request.auth.uid ||
+        request.resource.data.instituteId == request.auth.uid
+      );
+    }
+
+    // 6. Transfer Requests
+    match /transfer_requests/{requestId} {
+      allow read, write: if isSignedIn() && (
+        resource == null || 
+        resource.data.from_institute_id == request.auth.uid || 
+        resource.data.to_institute_id == request.auth.uid ||
+        request.resource.data.from_institute_id == request.auth.uid ||
+        request.resource.data.to_institute_id == request.auth.uid
+      );
+    }
+
+    // 7. General Institute Collections (fallback)
+    match /{document=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

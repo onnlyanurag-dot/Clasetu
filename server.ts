@@ -1,27 +1,70 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getAuth, DecodedIdToken } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
+import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
 const PORT = 3000;
-const isServerless = process.env.NETLIFY === "true" || process.env.LAMBDA_TASK_ROOT !== undefined;
-const DATA_FILE = isServerless 
-  ? path.join("/tmp", "data.json") 
-  : path.join(process.cwd(), "data.json");
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "class-setu-2b8e4";
 
-// Define basic interface schemas for state
-interface InstituteSettings {
+// ==========================================
+// 1. FIREBASE ADMIN SDK INITIALIZATION
+// ==========================================
+if (!getApps().length) {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      initializeApp({
+        credential: cert(sa),
+        projectId: sa.project_id || FIREBASE_PROJECT_ID,
+      });
+      console.log("[Firebase Admin] Initialized with FIREBASE_SERVICE_ACCOUNT credential");
+    } catch (e: any) {
+      console.error("[Firebase Admin] Failed parsing FIREBASE_SERVICE_ACCOUNT:", e.message);
+      initializeApp({ projectId: FIREBASE_PROJECT_ID });
+    }
+  } else if (process.env.FIREBASE_PRIVATE_KEY && process.env.FIREBASE_CLIENT_EMAIL) {
+    initializeApp({
+      credential: cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
+      }),
+      projectId: FIREBASE_PROJECT_ID,
+    });
+    console.log("[Firebase Admin] Initialized with FIREBASE_CLIENT_EMAIL & FIREBASE_PRIVATE_KEY");
+  } else {
+    // Default ADC or project-level verification
+    initializeApp({ projectId: FIREBASE_PROJECT_ID });
+    console.log(`[Firebase Admin] Initialized with projectId: ${FIREBASE_PROJECT_ID}`);
+  }
+}
+
+export const adminAuth = getAuth();
+export const firestore = getFirestore();
+
+// ==========================================
+// 2. SCHEMAS & INTERFACES
+// ==========================================
+export interface AuthenticatedRequest extends express.Request {
+  user?: DecodedIdToken;
+  instituteId?: string;
+}
+
+export interface InstituteSettings {
   name: string;
   logo: string;
   address: string;
   contact: string;
 }
 
-interface Student {
+export interface Student {
   id: string;
   name: string;
   parentName: string;
@@ -40,24 +83,30 @@ interface Student {
   status: "active" | "inactive" | "ACTIVE" | "ARCHIVED" | "READY_TO_TRANSFER";
   instituteId?: string;
   grade?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-interface Batch {
+export interface Batch {
   id: string;
   name: string;
-  startTime: string; // e.g. "07:00 AM" or "15:00"
+  startTime: string;
   endTime: string;
   capacity: number;
   days: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
-interface AttendanceRecord {
-  date: string; // YYYY-MM-DD
+export interface AttendanceRecord {
+  id?: string;
+  date: string;
   studentId: string;
   status: "Present" | "Absent";
+  markedAt?: string;
 }
 
-interface FeeInstallment {
+export interface FeeInstallment {
   id: string;
   studentId: string;
   installmentNumber: number;
@@ -68,17 +117,17 @@ interface FeeInstallment {
   paymentDate?: string;
 }
 
-interface Notice {
+export interface Notice {
   id: string;
   title: string;
   body: string;
   recipientType: "All Students" | "All Parents" | "Selected Students";
-  recipients: string[]; // List of Student IDs if selected
+  recipients: string[];
   sentAt: string;
   status: "Delivered" | "Failed";
 }
 
-interface NotificationLog {
+export interface NotificationLog {
   id: string;
   studentId: string;
   type: "absent_alert" | "fee_reminder" | "notice";
@@ -86,20 +135,37 @@ interface NotificationLog {
   text: string;
   sentAt: string;
   status: "Sent" | "Blocked" | "Delivered" | "Failed" | string;
+  medium?: "WhatsApp" | "SMS";
 }
 
-interface DbSchema {
-  settings: InstituteSettings;
-  students: Student[];
-  batches: Batch[];
-  attendance: AttendanceRecord[];
-  installments: FeeInstallment[];
-  notices: Notice[];
-  logs: NotificationLog[];
-  adminUsers: { email: string; passwordHash: string; otp?: string; otpExpires?: number }[];
+export interface MetaWhatsAppConfig {
+  accessToken: string;
+  phoneNumberId: string;
+  businessAccountId: string;
+  defaultTemplate: string;
+  languageCode: string;
 }
 
-// Helper to generate IDs
+let activeWhatsAppConfig: MetaWhatsAppConfig = {
+  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || "",
+  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "1314273115097110",
+  businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "1537660763931011",
+  defaultTemplate: process.env.WHATSAPP_DEFAULT_TEMPLATE || "hello_world",
+  languageCode: process.env.WHATSAPP_LANGUAGE_CODE || "en_US"
+};
+
+// ==========================================
+// 3. MULTI-TENANT FIRESTORE PATH HELPERS
+// ==========================================
+export const getInstituteDoc = (instituteId: string) => firestore.collection("institutes").doc(instituteId);
+export const getStudentsCol = (instituteId: string) => getInstituteDoc(instituteId).collection("students");
+export const getBatchesCol = (instituteId: string) => getInstituteDoc(instituteId).collection("batches");
+export const getAttendanceCol = (instituteId: string) => getInstituteDoc(instituteId).collection("attendance");
+export const getInstallmentsCol = (instituteId: string) => getInstituteDoc(instituteId).collection("installments");
+export const getNoticesCol = (instituteId: string) => getInstituteDoc(instituteId).collection("notices");
+export const getLogsCol = (instituteId: string) => getInstituteDoc(instituteId).collection("logs");
+
+// Helper to generate distinct IDs
 function generateId(prefix: string): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let random = "";
@@ -110,87 +176,19 @@ function generateId(prefix: string): string {
   return `${prefix}-${year}-${random}`;
 }
 
-// Helper to fetch student details dynamically from Firestore REST API
-async function fetchStudentFromFirestore(studentId: string): Promise<Student | null> {
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/students/${studentId}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const fields = data.fields || {};
-      return {
-        id: studentId,
-        name: fields.name?.stringValue || "",
-        parentName: fields.parentName?.stringValue || "",
-        parentMobile: fields.parentMobile?.stringValue || "",
-        alternateMobile: fields.alternateMobile?.stringValue || "",
-        class: fields.class?.stringValue || "",
-        schoolName: fields.schoolName?.stringValue || "",
-        schoolTiming: fields.schoolTiming?.stringValue || "",
-        preferredTuitionTiming: fields.preferredTuitionTiming?.stringValue || "",
-        reasonForPreferredTiming: fields.reasonForPreferredTiming?.stringValue || "",
-        subjects: fields.subjects?.arrayValue?.values?.map((v: any) => v.stringValue) || [],
-        admissionDate: fields.admissionDate?.stringValue || "",
-        feesAmount: Number(fields.feesAmount?.integerValue || fields.feesAmount?.doubleValue || 0),
-        feesPlan: fields.feesPlan?.stringValue || "quarterly",
-        batchId: fields.batchId?.stringValue || null,
-        status: fields.status?.stringValue || "active",
-        instituteId: fields.instituteId?.stringValue || ""
-      };
-    }
-  } catch (err) {
-    console.error(`Failed to fetch student ${studentId} from Firestore REST:`, err);
-  }
-  return null;
-}
-
-// Helper to fetch the specific Institute Name dynamically from Firestore REST API
-async function getInstituteName(instituteId: string): Promise<string> {
-  if (!instituteId || instituteId === "default_institute") return "Alpha Excellence Coaching";
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/users/${instituteId}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      const instName = data.fields?.institute?.mapValue?.fields?.instituteName?.stringValue 
-                    || data.fields?.instituteName?.stringValue 
-                    || data.fields?.name?.stringValue;
-      if (instName) return instName;
-    }
-  } catch (err) {
-    console.error(`Failed to fetch institute name for ${instituteId}:`, err);
-  }
-  return "Alpha Excellence Coaching";
-}
-
-// Meta WhatsApp Cloud API Config & Helper
-interface MetaWhatsAppConfig {
-  accessToken: string;
-  phoneNumberId: string;
-  businessAccountId: string;
-  defaultTemplate: string;
-  languageCode: string;
-}
-
-let activeWhatsAppConfig: MetaWhatsAppConfig = {
-  accessToken: process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_API_TOKEN || "YOUR_NEW_TEMPORARY_ACCESS_TOKEN",
-  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "1314273115097110",
-  businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "1537660763931011",
-  defaultTemplate: process.env.WHATSAPP_DEFAULT_TEMPLATE || "hello_world",
-  languageCode: process.env.WHATSAPP_LANGUAGE_CODE || "en_US"
-};
-
+// Format mobile for WhatsApp Cloud API
 function formatWhatsAppNumber(phone: string): string {
   let clean = (phone || "").replace(/\D/g, "");
   if (clean.length === 11 && clean.startsWith("0")) {
     clean = clean.substring(1);
   }
   if (clean.length === 10) {
-    clean = "91" + clean; // Default India prefix
+    clean = "91" + clean;
   }
   return clean;
 }
 
+// Meta WhatsApp Cloud API dispatcher
 async function sendMetaWhatsAppMessage(
   recipientPhone: string,
   options: {
@@ -208,7 +206,7 @@ async function sendMetaWhatsAppMessage(
   if (!token || !phoneId) {
     return {
       success: false,
-      error: "Meta WhatsApp Access Token or Phone Number ID is missing. Please configure credentials in WhatsApp Test Mode or .env file.",
+      error: "Meta WhatsApp credentials unconfigured. Please configure WhatsApp Cloud API credentials.",
       simulated: true
     };
   }
@@ -266,8 +264,7 @@ async function sendMetaWhatsAppMessage(
         rawResponse: data
       };
     } else {
-      console.warn(`[Meta WhatsApp Primary Template Failed] ${data.error?.message || JSON.stringify(data.error)}. Attempting automatic fallback to hello_world template...`);
-      // Automatic fallback to universally approved hello_world template (en_US, 0 parameters)
+      console.warn(`[Meta WhatsApp Primary Failed] ${data.error?.message || JSON.stringify(data.error)}. Trying fallback hello_world...`);
       const fallbackPayload = {
         messaging_product: "whatsapp",
         recipient_type: "individual",
@@ -289,7 +286,6 @@ async function sendMetaWhatsAppMessage(
         });
         const fallbackData = await fallbackRes.json();
         if (fallbackRes.ok && fallbackData.messages?.[0]?.id) {
-          console.log(`[Meta WhatsApp Fallback Success] Dispatched hello_world to ${cleanPhone} (wamid: ${fallbackData.messages[0].id})`);
           return {
             success: true,
             messageId: fallbackData.messages[0].id,
@@ -316,376 +312,189 @@ async function sendMetaWhatsAppMessage(
   }
 }
 
-// Helper to dispatch WhatsApp template notifications via Meta Cloud API
-async function sendWhatsAppNotification(parentMobile: string, studentName: string, parentName: string, instituteName: string): Promise<string> {
-  if (activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId) {
-    const metaRes = await sendMetaWhatsAppMessage(parentMobile, {
-      type: "template",
-      templateName: "hello_world",
-      languageCode: "en_US",
-      parameters: []
+// Calculate installment dates for fee generation
+function calculateInstallmentDueDates(admissionDateStr: string, feesPlan: "quarterly" | "half-yearly"): string[] {
+  const parts = (admissionDateStr || new Date().toISOString().split("T")[0]).split("-");
+  const admYear = parseInt(parts[0], 10) || new Date().getFullYear();
+  const admMonth = parseInt(parts[1], 10) || (new Date().getMonth() + 1);
+  const admDay = parseInt(parts[2], 10) || new Date().getDate();
+
+  let academicStartYear = admYear;
+  if (admMonth < 4) {
+    academicStartYear = admYear - 1;
+  }
+
+  const clampDay = (day: number, month: number) => {
+    let maxDays = 31;
+    if (month === 11) maxDays = 30;
+    return Math.min(day, maxDays);
+  };
+
+  const dates: string[] = [];
+  if (feesPlan === "quarterly") {
+    dates.push(`${academicStartYear}-05-${String(clampDay(admDay, 5)).padStart(2, "0")}`);
+    dates.push(`${academicStartYear}-08-${String(clampDay(admDay, 8)).padStart(2, "0")}`);
+    dates.push(`${academicStartYear}-11-${String(clampDay(admDay, 11)).padStart(2, "0")}`);
+    dates.push(`${academicStartYear + 1}-01-${String(clampDay(admDay, 1)).padStart(2, "0")}`);
+  } else {
+    dates.push(`${academicStartYear}-05-${String(clampDay(admDay, 5)).padStart(2, "0")}`);
+    dates.push(`${academicStartYear}-11-${String(clampDay(admDay, 11)).padStart(2, "0")}`);
+  }
+  return dates;
+}
+
+// ==========================================
+// 4. INPUT VALIDATORS
+// ==========================================
+function validateStudentInput(body: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") {
+    return { valid: false, errors: ["Request payload must be a JSON object"] };
+  }
+  if (!body.name || typeof body.name !== "string" || body.name.trim().length < 2) {
+    errors.push("Student name is required (minimum 2 characters).");
+  }
+  const cleanMobile = (body.parentMobile ? String(body.parentMobile) : "").replace(/\D/g, "");
+  if (!cleanMobile || cleanMobile.length < 10) {
+    errors.push("Valid 10-digit parent mobile number is required.");
+  }
+  if (body.feesAmount !== undefined && (typeof body.feesAmount !== "number" || body.feesAmount < 0 || isNaN(body.feesAmount))) {
+    errors.push("Fees amount must be a positive number.");
+  }
+  if (body.feesPlan && !["quarterly", "half-yearly"].includes(body.feesPlan)) {
+    errors.push("Fees plan must be either 'quarterly' or 'half-yearly'.");
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateBatchInput(body: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") {
+    return { valid: false, errors: ["Request payload must be a JSON object"] };
+  }
+  if (!body.name || typeof body.name !== "string" || body.name.trim().length < 2) {
+    errors.push("Batch name is required (minimum 2 characters).");
+  }
+  if (body.capacity !== undefined && (typeof body.capacity !== "number" || body.capacity <= 0 || isNaN(body.capacity))) {
+    errors.push("Capacity must be a positive integer.");
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateNoticeInput(body: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") {
+    return { valid: false, errors: ["Request payload must be a JSON object"] };
+  }
+  if (!body.title || typeof body.title !== "string" || body.title.trim().length < 2) {
+    errors.push("Notice title is required (minimum 2 characters).");
+  }
+  if (!body.body || typeof body.body !== "string" || body.body.trim().length < 3) {
+    errors.push("Notice body text is required (minimum 3 characters).");
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateAttendanceMarkInput(body: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") {
+    return { valid: false, errors: ["Request payload must be a JSON object"] };
+  }
+  if (!body.date || typeof body.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+    errors.push("Date must be in format YYYY-MM-DD.");
+  }
+  if (!body.records || !Array.isArray(body.records) || body.records.length === 0) {
+    errors.push("Attendance records array cannot be empty.");
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateFeePaymentInput(body: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!body || typeof body !== "object") {
+    return { valid: false, errors: ["Request payload must be a JSON object"] };
+  }
+  if (!body.installmentId || typeof body.installmentId !== "string") {
+    errors.push("installmentId is required.");
+  }
+  if (body.amount !== undefined && (typeof body.amount !== "number" || body.amount <= 0 || isNaN(body.amount))) {
+    errors.push("Payment amount must be a positive number.");
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+// ==========================================
+// 5. RATE LIMITERS
+// ==========================================
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Rate limit exceeded. Too many requests, please try again in 15 minutes." }
+});
+
+const sensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many requests to this sensitive endpoint. Please try again later." }
+});
+
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Rate limit exceeded for write operations. Please slow down." }
+});
+
+// ==========================================
+// 6. AUTHENTICATION MIDDLEWARE
+// ==========================================
+export const authenticateFirebaseUser = async (
+  req: AuthenticatedRequest,
+  res: express.Response,
+  next: express.NextFunction
+) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      error: "Unauthorized: Missing or invalid Authorization header. Expected 'Authorization: Bearer <firebase_id_token>'",
     });
-    if (metaRes.success) {
-      return "Sent";
-    }
   }
-  return "Sent";
-}
 
-// Helper to dispatch SMS notifications
-async function sendSmsNotification(parentMobile: string, studentName: string, parentName: string, instituteName: string): Promise<string> {
-  return "Sent";
-}
-
-interface InstituteDoc {
-  id: string;
-  billingModel?: string;
-  isWhatsAppEnabled: boolean;
-  isSmsEnabled: boolean;
-  whatsappLimit: number;
-  whatsappSent: number;
-  whatsappLeft: number;
-  smsLimit: number;
-  smsSent: number;
-  smsLeft: number;
-}
-
-async function fetchInstituteFromFirestore(instituteId: string): Promise<InstituteDoc | null> {
-  try {
-    let url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/institutes/${instituteId}`;
-    let res = await fetch(url);
-    if (!res.ok) {
-      url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/users/${instituteId}`;
-      res = await fetch(url);
-    }
-    if (res.ok) {
-      const data = await res.json();
-      const fields = data.fields || {};
-      const whatsappLimit = Number(fields.whatsappLimit?.integerValue || fields.whatsappLimit?.doubleValue || fields.whatsapp_limit?.integerValue || fields.whatsapp_limit?.doubleValue || 0);
-      const whatsappSent = Number(fields.whatsappSent?.integerValue || fields.whatsappSent?.doubleValue || fields.whatsapp_sent?.integerValue || fields.whatsapp_sent?.doubleValue || 0);
-      const smsLimit = Number(fields.smsLimit?.integerValue || fields.smsLimit?.doubleValue || fields.sms_limit?.integerValue || fields.sms_limit?.doubleValue || 0);
-      const smsSent = Number(fields.smsSent?.integerValue || fields.smsSent?.doubleValue || fields.sms_sent?.integerValue || fields.sms_sent?.doubleValue || 0);
-
-      const isWhatsAppEnabled = fields.isWhatsAppEnabled?.booleanValue ?? fields.isWhatsappEnabled?.booleanValue ?? true;
-      const isSmsEnabled = fields.isSmsEnabled?.booleanValue ?? fields.isSmsEnabled?.booleanValue ?? true;
-
-      return {
-        id: instituteId,
-        billingModel: "PAY_AS_YOU_GO",
-        isWhatsAppEnabled,
-        isSmsEnabled,
-        whatsappLimit,
-        whatsappSent,
-        whatsappLeft: 999999,
-        smsLimit,
-        smsSent,
-        smsLeft: 999999
-      };
-    }
-  } catch (err) {
-    console.error(`Failed to fetch institute ${instituteId} from Firestore REST:`, err);
-  }
-  return null;
-}
-
-async function updateInstituteBalances(
-  instituteId: string, 
-  updates: { whatsappSent?: number; whatsappLeft?: number; smsSent?: number; smsLeft?: number }
-): Promise<void> {
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/institutes/${instituteId}`;
-    const queryParams: string[] = [];
-    const fieldsToPatch: any = {};
-
-    if (updates.whatsappSent !== undefined) {
-      queryParams.push("updateMask.fieldPaths=whatsappSent");
-      fieldsToPatch.whatsappSent = { integerValue: updates.whatsappSent.toString() };
-    }
-    if (updates.whatsappLeft !== undefined) {
-      queryParams.push("updateMask.fieldPaths=whatsappLeft");
-      fieldsToPatch.whatsappLeft = { integerValue: updates.whatsappLeft.toString() };
-    }
-    if (updates.smsSent !== undefined) {
-      queryParams.push("updateMask.fieldPaths=smsSent");
-      fieldsToPatch.smsSent = { integerValue: updates.smsSent.toString() };
-    }
-    if (updates.smsLeft !== undefined) {
-      queryParams.push("updateMask.fieldPaths=smsLeft");
-      fieldsToPatch.smsLeft = { integerValue: updates.smsLeft.toString() };
-    }
-
-    if (queryParams.length === 0) return;
-
-    const patchUrl = `${url}?${queryParams.join("&")}`;
-    const patchRes = await fetch(patchUrl, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: fieldsToPatch })
+  const token = authHeader.substring(7).trim();
+  if (!token) {
+    return res.status(401).json({
+      error: "Unauthorized: Token missing in Bearer header",
     });
-    if (!patchRes.ok) {
-      console.error(`Failed to update institute balances for ${instituteId}:`, await patchRes.text());
-    } else {
-      console.log(`[Firestore REST] Updated balances for institute ${instituteId}`);
-    }
-  } catch (err) {
-    console.error(`Failed to execute updateInstituteBalances for ${instituteId}:`, err);
   }
-}
 
-// Default/Initial State
-const defaultState: DbSchema = {
-  settings: {
-    name: "Alpha Excellence Coaching",
-    logo: "🎓",
-    address: "Suite 402, EduTower Building, Knowledge Park, Metro City",
-    contact: "+91 98765 43210"
-  },
-  adminUsers: [
-    {
-      email: "adzentive@gmail.com",
-      passwordHash: "password123" // In production, hashing is preferred. Since this is an internal local container admin portal, simple plaintext or exact match is secure.
-    },
-    {
-      email: "admin@classsetu.com",
-      passwordHash: "admin123"
-    }
-  ],
-  batches: [
-    {
-      id: "BTCH-001",
-      name: "Elite Morning Advanced",
-      startTime: "07:00 AM",
-      endTime: "08:30 AM",
-      capacity: 10,
-      days: ["Mon", "Tue", "Wed", "Thu", "Fri"]
-    },
-    {
-      id: "BTCH-002",
-      name: "Afternoon Prime Foundation",
-      startTime: "03:00 PM",
-      endTime: "04:30 PM",
-      capacity: 15,
-      days: ["Mon", "Wed", "Fri"]
-    },
-    {
-      id: "BTCH-003",
-      name: "Late Evening Masters",
-      startTime: "05:00 PM",
-      endTime: "06:30 PM",
-      capacity: 12,
-      days: ["Mon", "Tue", "Thu", "Fri"]
-    }
-  ],
-  students: [
-    {
-      id: "STD-2026-X8K92P",
-      name: "Aarav Sharma",
-      parentName: "Rajesh Sharma",
-      parentMobile: "+91 99112 23344",
-      alternateMobile: "+91 99112 23345",
-      class: "Grade 10",
-      schoolName: "St. Xavier's International School",
-      schoolTiming: "08:00 AM - 02:00 PM",
-      preferredTuitionTiming: "03:00 PM - 05:00 PM",
-      reasonForPreferredTiming: "Travels directly from school to tuition to save transit time.",
-      subjects: ["Mathematics", "Physics"],
-      admissionDate: "2026-04-10",
-      feesAmount: 16000,
-      feesPlan: "quarterly",
-      batchId: "BTCH-002",
-      status: "active"
-    },
-    {
-      id: "STD-2026-M4V8W1",
-      name: "Diya Patel",
-      parentName: "Mahendra Patel",
-      parentMobile: "+91 98223 34455",
-      alternateMobile: "",
-      class: "Grade 11",
-      schoolName: "DP Star Secondary School",
-      schoolTiming: "07:30 AM - 01:30 PM",
-      preferredTuitionTiming: "03:00 PM - 05:00 PM",
-      reasonForPreferredTiming: "Has sports training at 5:30 PM every alternate day.",
-      subjects: ["Chemistry", "Physics"],
-      admissionDate: "2026-04-12",
-      feesAmount: 18000,
-      feesPlan: "half-yearly",
-      batchId: "BTCH-002",
-      status: "active"
-    },
-    {
-      id: "STD-2026-P3Q9R7",
-      name: "Kabir Mehta",
-      parentName: "Sanjay Mehta",
-      parentMobile: "+91 97334 45566",
-      alternateMobile: "+91 97334 45567",
-      class: "Grade 12",
-      schoolName: "Delhi Public School",
-      schoolTiming: "08:00 AM - 02:30 PM",
-      preferredTuitionTiming: "05:00 PM - 07:00 PM",
-      reasonForPreferredTiming: "Late school bus dropoff, cannot join early batch.",
-      subjects: ["Mathematics", "Physics", "Chemistry"],
-      admissionDate: "2026-04-15",
-      feesAmount: 24000,
-      feesPlan: "quarterly",
-      batchId: "BTCH-003",
-      status: "active"
-    },
-    {
-      id: "STD-2026-T9Y8U5",
-      name: "Rohan Das",
-      parentName: "Amit Das",
-      parentMobile: "+91 96445 56677",
-      alternateMobile: "",
-      class: "Grade 10",
-      schoolName: "Modern School",
-      schoolTiming: "08:30 AM - 03:00 PM",
-      preferredTuitionTiming: "05:00 PM - 07:00 PM",
-      reasonForPreferredTiming: "Late school dispersal times.",
-      subjects: ["Mathematics"],
-      admissionDate: "2026-04-18",
-      feesAmount: 12000,
-      feesPlan: "quarterly",
-      batchId: null, // Needs assignment
-      status: "active"
-    },
-    {
-      id: "STD-2026-K1J2B3",
-      name: "Ananya Iyer",
-      parentName: "Raman Iyer",
-      parentMobile: "+91 95556 67788",
-      alternateMobile: "+91 95556 67789",
-      class: "Grade 12 (JEE)",
-      schoolName: "National Science Academy",
-      schoolTiming: "07:00 AM - 12:30 PM",
-      preferredTuitionTiming: "07:00 AM - 09:00 AM",
-      reasonForPreferredTiming: "Pre-school slot or self-study timing matches.",
-      subjects: ["Physics", "Mathematics"],
-      admissionDate: "2026-04-05",
-      feesAmount: 30000,
-      feesPlan: "half-yearly",
-      batchId: "BTCH-001",
-      status: "active"
-    }
-  ],
-  attendance: [
-    // Prepopulate attendance records for June 9, 10, 11
-    { date: "2026-06-09", studentId: "STD-2026-X8K92P", status: "Present" },
-    { date: "2026-06-09", studentId: "STD-2026-M4V8W1", status: "Present" },
-    { date: "2026-06-09", studentId: "STD-2026-P3Q9R7", status: "Absent" },
-    { date: "2026-06-09", studentId: "STD-2026-K1J2B3", status: "Present" },
-
-    { date: "2026-06-10", studentId: "STD-2026-X8K92P", status: "Present" },
-    { date: "2026-06-10", studentId: "STD-2026-M4V8W1", status: "Absent" },
-    { date: "2026-06-10", studentId: "STD-2026-P3Q9R7", status: "Present" },
-    { date: "2026-06-10", studentId: "STD-2026-K1J2B3", status: "Present" },
-
-    { date: "2026-06-11", studentId: "STD-2026-X8K92P", status: "Present" },
-    { date: "2026-06-11", studentId: "STD-2026-M4V8W1", status: "Present" },
-    { date: "2026-06-11", studentId: "STD-2026-P3Q9R7", status: "Present" },
-    { date: "2026-06-11", studentId: "STD-2026-K1J2B3", status: "Present" }
-  ],
-  installments: [
-    // Aarav Sharma (fees: 16000, quarterly: 4 installments of 4000)
-    { id: "INST-1", studentId: "STD-2026-X8K92P", installmentNumber: 1, amount: 4000, dueDate: "2026-04-15", status: "Paid", paidAmount: 4000, paymentDate: "2026-04-14" },
-    { id: "INST-2", studentId: "STD-2026-X8K92P", installmentNumber: 2, amount: 4000, dueDate: "2026-07-15", status: "Paid", paidAmount: 4000, paymentDate: "2026-06-05" },
-    { id: "INST-3", studentId: "STD-2026-X8K92P", installmentNumber: 3, amount: 4000, dueDate: "2026-10-15", status: "Unpaid", paidAmount: 0 },
-    { id: "INST-4", studentId: "STD-2026-X8K92P", installmentNumber: 4, amount: 4000, dueDate: "2027-01-15", status: "Unpaid", paidAmount: 0 },
-
-    // Diya Patel (fees: 18000, half-yearly: 2 installments of 9000)
-    { id: "INST-5", studentId: "STD-2026-M4V8W1", installmentNumber: 1, amount: 9000, dueDate: "2026-04-15", status: "Paid", paidAmount: 9000, paymentDate: "2026-04-12" },
-    { id: "INST-6", studentId: "STD-2026-M4V8W1", installmentNumber: 2, amount: 9000, dueDate: "2026-10-15", status: "Unpaid", paidAmount: 0 },
-
-    // Kabir Mehta (fees: 24000, quarterly: 4 installments of 6000)
-    { id: "INST-7", studentId: "STD-2026-P3Q9R7", installmentNumber: 1, amount: 6000, dueDate: "2026-04-15", status: "Paid", paidAmount: 6000, paymentDate: "2026-04-15" },
-    { id: "INST-8", studentId: "STD-2026-P3Q9R7", installmentNumber: 2, amount: 6000, dueDate: "2026-07-15", status: "Partially Paid", paidAmount: 3000, paymentDate: "2026-06-01" },
-    { id: "INST-9", studentId: "STD-2026-P3Q9R7", installmentNumber: 3, amount: 6000, dueDate: "2026-10-15", status: "Unpaid", paidAmount: 0 },
-    { id: "INST-10", studentId: "STD-2026-P3Q9R7", installmentNumber: 4, amount: 6000, dueDate: "2027-01-15", status: "Unpaid", paidAmount: 0 },
-
-    // Rohan Das (fees: 12000, quarterly: 4 installments of 3000)
-    { id: "INST-11", studentId: "STD-2026-T9Y8U5", installmentNumber: 1, amount: 3000, dueDate: "2026-04-20", status: "Paid", paidAmount: 3000, paymentDate: "2026-04-20" },
-    { id: "INST-12", studentId: "STD-2026-T9Y8U5", installmentNumber: 2, amount: 3000, dueDate: "2026-07-20", status: "Unpaid", paidAmount: 0 },
-    { id: "INST-13", studentId: "STD-2026-T9Y8U5", installmentNumber: 3, amount: 3000, dueDate: "2026-10-20", status: "Unpaid", paidAmount: 0 },
-    { id: "INST-14", studentId: "STD-2026-T9Y8U5", installmentNumber: 4, amount: 3000, dueDate: "2027-01-20", status: "Unpaid", paidAmount: 0 },
-
-    // Ananya Iyer (fees: 30000, half-yearly: 2 installments of 15000)
-    { id: "INST-15", studentId: "STD-2026-K1J2B3", installmentNumber: 1, amount: 15000, dueDate: "2026-04-10", status: "Paid", paidAmount: 15000, paymentDate: "2026-04-09" },
-    { id: "INST-16", studentId: "STD-2026-K1J2B3", installmentNumber: 2, amount: 15000, dueDate: "2026-10-10", status: "Unpaid", paidAmount: 0 }
-  ],
-  notices: [
-    {
-      id: "NTC-001",
-      title: "Summer Term Break Announcement",
-      body: "Dear Parents and Students, ClassSetu will remain closed from June 15 to June 18 for summer break. Daily assignments are uploaded in standard portals. Regular batches will resume normal timings from June 19 onwards.",
-      recipientType: "All Students",
-      recipients: [],
-      sentAt: "2026-06-10T10:00:00.000Z",
-      status: "Delivered"
-    }
-  ],
-  logs: [
-    {
-      id: "LOG-001",
-      studentId: "STD-2026-P3Q9R7",
-      type: "absent_alert",
-      recipientMobile: "+91 97334 45566",
-      text: "Absence Alert: Dear Parent, Kabir Mehta was marked ABSENT today (2026-06-09) at Alpha Excellence Coaching. Please contact support.",
-      sentAt: "2026-06-09T18:30:00.000Z",
-      status: "Sent"
-    },
-    {
-      id: "LOG-002",
-      studentId: "STD-2026-P3Q9R7",
-      type: "fee_reminder",
-      recipientMobile: "+91 97334 45566",
-      text: "Fee Due Alert: Hello Sanjay Mehta, Kabir Mehta has a pending fee installment of ₹3000 due. Please settle by the due date of 2026-07-15 to avoid interruption in active tuition batches.",
-      sentAt: "2026-06-11T09:12:00.000Z",
-      status: "Sent"
-    }
-  ]
+  try {
+    const decodedToken = await adminAuth.verifyIdToken(token);
+    req.user = decodedToken;
+    req.instituteId = decodedToken.uid;
+    next();
+  } catch (error: any) {
+    console.error("[Auth Middleware] Firebase ID Token verification failed:", error.message);
+    return res.status(401).json({
+      error: "Unauthorized: Invalid or expired Firebase ID token",
+      details: error.code || error.message,
+    });
+  }
 };
 
-// Seed/Load database
-function loadDb(): DbSchema {
-  try {
-    if (isServerless && !fs.existsSync(DATA_FILE)) {
-      // Seed /tmp/data.json from the project's root data.json or fallback to defaultState
-      const rootPath = path.join(process.cwd(), "data.json");
-      if (fs.existsSync(rootPath)) {
-        console.log("[Serverless Seed] Seeding from root data.json:", rootPath);
-        fs.writeFileSync(DATA_FILE, fs.readFileSync(rootPath, "utf-8"));
-      } else {
-        console.log("[Serverless Seed] Seeding from defaultState");
-        fs.writeFileSync(DATA_FILE, JSON.stringify(defaultState, null, 2));
-      }
-    }
-
-    if (fs.existsSync(DATA_FILE)) {
-      const content = fs.readFileSync(DATA_FILE, "utf-8");
-      return JSON.parse(content);
-    } else {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(defaultState, null, 2));
-      return defaultState;
-    }
-  } catch (error) {
-    console.error("Error reading database file, returning defaults:", error);
-    return defaultState;
-  }
-}
-
-function saveDb(data: DbSchema) {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
-  } catch (error) {
-    console.error("Error saving database file:", error);
-  }
-}
-
+// ==========================================
+// 7. EXPRESS APP INITIALIZATION
+// ==========================================
 export async function createExpressApp() {
   const app = express();
   app.use(express.json());
+  app.use(generalLimiter);
 
-  // Initialize Gemini Client
+  // Initialize Gemini AI Client
   const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
     httpOptions: {
@@ -695,1080 +504,939 @@ export async function createExpressApp() {
     }
   });
 
-  // Load state
-  let dbState = loadDb();
-
-  // Middleware for active simple token based auth if requested
-  // We can track sessions purely in our web application local storage or simple local cookies!
-
-  // --- API ROUTES ---
-
-  // Auth: Login
-  app.post("/api/auth/login", (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password are required" });
-    }
-    if (typeof password === "string" && password.length > 18) {
-      return res.status(400).json({ error: "Password cannot exceed 18 characters" });
-    }
-    const user = dbState.adminUsers.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase() && u.passwordHash === password
-    );
-    if (!user) {
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-    // Return a dummy session token and admin details
+  // -------------------------------------------------------------
+  // HEALTH CHECK (The ONLY unauthenticated route under /api/*)
+  // -------------------------------------------------------------
+  app.get("/api/health", (_req, res) => {
     res.json({
-      token: `token-${user.email}-${Date.now()}`,
-      user: {
-        email: user.email,
-        role: "Institute Admin",
-        name: dbState.settings.name
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      service: "ClasSetu Multi-Tenant API",
+      auth: "firebase-admin-enforced",
+      persistence: "firestore-isolated"
+    });
+  });
+
+  // -------------------------------------------------------------
+  // ATTACH AUTHENTICATION MIDDLEWARE TO EVERY /api/* ROUTE
+  // -------------------------------------------------------------
+  app.use("/api", authenticateFirebaseUser);
+
+  // -------------------------------------------------------------
+  // INSTITUTE SETTINGS (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/institute/settings", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const doc = await getInstituteDoc(instituteId).get();
+      if (doc.exists && doc.data()?.settings) {
+        return res.json(doc.data()!.settings);
       }
-    });
+      const defaultSettings: InstituteSettings = {
+        name: "My Coaching Institute",
+        logo: "🎓",
+        address: "Suite 402, EduTower Building, Knowledge Park",
+        contact: "+91 98765 43210"
+      };
+      await getInstituteDoc(instituteId).set({ settings: defaultSettings }, { merge: true });
+      res.json(defaultSettings);
+    } catch (err: any) {
+      console.error(`[Settings GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to retrieve institute settings", details: err.message });
+    }
   });
 
-  // Auth: Forgot Password (OTP Verification)
-  app.post("/api/auth/forgot-password", (req, res) => {
-    const { email } = req.body;
-    if (!email) {
-      return res.status(400).json({ error: "Email is required" });
-    }
-    const user = dbState.adminUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      return res.status(404).json({ error: "Administrator email not found" });
-    }
-    // Generate a beautiful 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    user.otp = otp;
-    user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes from now
-    saveDb(dbState);
-
-    // Send back simulated success and reveal the OTP for development convenience in UI with clear message!
-    res.json({
-      success: true,
-      message: `OTP sent to configured fallback channels. For your simulation review, use verification code: ${otp}`,
-      otpSimulationInfo: otp // Revealed so the user can easily log in during testing/preview
-    });
-  });
-
-  // Auth: Verify OTP and Reset Password
-  app.post("/api/auth/reset-password", (req, res) => {
-    const { email, otp, newPassword } = req.body;
-    if (!email || !otp || !newPassword) {
-      return res.status(400).json({ error: "All fields are required" });
-    }
-    if (typeof newPassword === "string" && newPassword.length > 18) {
-      return res.status(400).json({ error: "Password cannot exceed 18 characters" });
-    }
-    const user = dbState.adminUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-    if (!user.otp || user.otp !== otp || (user.otpExpires && Date.now() > user.otpExpires)) {
-      return res.status(400).json({ error: "Invalid or expired OTP code" });
-    }
-    // Update password
-    user.passwordHash = newPassword;
-    delete user.otp;
-    delete user.otpExpires;
-    saveDb(dbState);
-    res.json({ success: true, message: "Password updated successfully. Please log in." });
-  });
-
-  // Settings
-  app.get("/api/institute/settings", (req, res) => {
-    res.json(dbState.settings);
-  });
-
-  app.put("/api/institute/settings", (req, res) => {
+  app.put("/api/institute/settings", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
     const { name, logo, address, contact } = req.body;
-    dbState.settings = { name, logo, address, contact };
-    saveDb(dbState);
-    res.json(dbState.settings);
+    try {
+      const updatedSettings: InstituteSettings = {
+        name: String(name || "").trim() || "My Coaching Institute",
+        logo: String(logo || "🎓"),
+        address: String(address || "").trim(),
+        contact: String(contact || "").trim()
+      };
+      await getInstituteDoc(instituteId).set({ settings: updatedSettings, updatedAt: new Date().toISOString() }, { merge: true });
+      res.json({ success: true, settings: updatedSettings });
+    } catch (err: any) {
+      console.error(`[Settings PUT] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to update settings", details: err.message });
+    }
   });
 
-  // Student Transfer Handshake Endpoints
-  app.get("/api/transfers/preview", async (req, res) => {
-    const { student_unique_code, transfer_pin } = req.query;
-    if (!student_unique_code || !transfer_pin) {
-      return res.status(400).json({ error: "Missing student_unique_code or transfer_pin" });
+  // -------------------------------------------------------------
+  // STUDENTS (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/students", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getStudentsCol(instituteId).get();
+      const students: Student[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Student, "id">)
+      }));
+      res.json(students);
+    } catch (err: any) {
+      console.error(`[Students GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch students", details: err.message });
+    }
+  });
+
+  app.post("/api/students", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const validation = validateStudentInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
     }
 
     try {
-      // 1. Fetch student document from Firestore REST API
-      const studentUrl = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/students/${student_unique_code}`;
-      const studentRes = await fetch(studentUrl);
-      
-      let student: any = null;
-      if (studentRes.ok) {
-        const studentDoc = await studentRes.json();
-        const fields = studentDoc.fields || {};
-        student = {
-          id: student_unique_code,
-          name: fields.name?.stringValue || "",
-          parentName: fields.parentName?.stringValue || "",
-          parentMobile: fields.parentMobile?.stringValue || "",
-          alternateMobile: fields.alternateMobile?.stringValue || "",
-          grade: fields.grade?.stringValue || fields.gradeLevel?.stringValue || "Grade 10",
-          gradeLevel: fields.gradeLevel?.stringValue || fields.grade?.stringValue || "Grade 10",
-          schoolName: fields.schoolName?.stringValue || "",
-          schoolTiming: fields.schoolTiming?.stringValue || "",
-          preferredTuitionTiming: fields.preferredTuitionTiming?.stringValue || "",
-          reasonForPreferredTiming: fields.reasonForPreferredTiming?.stringValue || "",
-          subjects: fields.subjects?.arrayValue?.values?.map((v: any) => v.stringValue) || [],
-          admissionDate: fields.admissionDate?.stringValue || "",
-          feesAmount: Number(fields.feesAmount?.integerValue || fields.feesAmount?.doubleValue || fields.totalFees?.integerValue || 16000),
-          feesPlan: fields.feesPlan?.stringValue || "quarterly",
-          status: fields.status?.stringValue || "active",
-          instituteId: fields.instituteId?.stringValue || ""
-        };
-      } else {
-        // Fallback to local memory state if REST failed/denied (for sandbox / testing robustness)
-        const localStudent = dbState.students.find(s => s.id === student_unique_code);
-        if (localStudent) {
-          student = localStudent;
-        } else {
-          return res.status(404).json({ error: "Student not found in database." });
-        }
-      }
+      const studentId = req.body.id || generateId("STD");
+      const feesAmount = Number(req.body.feesAmount || 0);
+      const feesPlan: "quarterly" | "half-yearly" = req.body.feesPlan === "half-yearly" ? "half-yearly" : "quarterly";
+      const admissionDate = req.body.admissionDate || new Date().toISOString().split("T")[0];
 
-      if (student.status !== "READY_TO_TRANSFER" && student.status !== "ready_to_transfer") {
-        return res.status(400).json({ error: "Student has not been released for transfer by their source institute." });
-      }
-
-      // 2. Verify Transfer PIN
-      let pinValid = false;
-      const logsUrl = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/transfer_logs`;
-      const logsRes = await fetch(logsUrl);
-      if (logsRes.ok) {
-        const logsData = await logsRes.json();
-        const docs = logsData.documents || [];
-        for (const doc of docs) {
-          const f = doc.fields || {};
-          const studentCode = f.student_unique_code?.stringValue;
-          const transferPin = f.transfer_pin?.stringValue || f.transfer_pin?.integerValue?.toString();
-          const logStatus = f.log_status?.stringValue;
-          if (studentCode === student_unique_code && String(transferPin) === String(transfer_pin) && logStatus === "PENDING") {
-            pinValid = true;
-            break;
-          }
-        }
-      } else {
-        // Fallback pin validation logic if REST query encounters index / firewall limits in local preview
-        pinValid = true; // Permissive fallback for mock transfers
-      }
-
-      if (!pinValid) {
-        return res.status(400).json({ error: "Incorrect Transfer PIN or PIN has expired/been used." });
-      }
-
-      return res.json({ student });
-    } catch (err: any) {
-      console.error("Transfer preview API failure:", err);
-      // Fallback for mock sandbox mode
-      const localStudent = dbState.students.find(s => s.id === student_unique_code);
-      if (localStudent) {
-        return res.json({ student: localStudent });
-      }
-      return res.status(500).json({ error: "Server error during handshake authentication." });
-    }
-  });
-
-  app.post("/api/transfers/accept", async (req, res) => {
-    const { student_unique_code, transfer_pin, new_institute_id } = req.body;
-    if (!student_unique_code || !transfer_pin || !new_institute_id) {
-      return res.status(400).json({ error: "Missing required params: student_unique_code, transfer_pin, or new_institute_id" });
-    }
-    // Update local memory list for completeness
-    const localStudent = dbState.students.find(s => s.id === student_unique_code);
-    if (localStudent) {
-      localStudent.instituteId = new_institute_id;
-      localStudent.status = "active";
-    }
-    return res.json({ success: true });
-  });
-
-  // Students List / Create / Update / Delete
-  app.get("/api/students", (req, res) => {
-    res.json(dbState.students);
-  });
-
-  app.post("/api/students", (req, res) => {
-    const studentData = req.body;
-    const stdId = generateId("STD");
-    const newStudent: Student = {
-      id: stdId,
-      name: studentData.name || "Unnamed Student",
-      parentName: studentData.parentName || "",
-      parentMobile: studentData.parentMobile || "",
-      alternateMobile: studentData.alternateMobile || "",
-      class: studentData.class || "",
-      schoolName: studentData.schoolName || "",
-      schoolTiming: studentData.schoolTiming || "",
-      preferredTuitionTiming: studentData.preferredTuitionTiming || "",
-      reasonForPreferredTiming: studentData.reasonForPreferredTiming || "",
-      subjects: Array.isArray(studentData.subjects) ? studentData.subjects : [],
-      admissionDate: studentData.admissionDate || new Date().toISOString().split("T")[0],
-      feesAmount: Number(studentData.feesAmount) || 0,
-      feesPlan: studentData.feesPlan === "half-yearly" ? "half-yearly" : "quarterly",
-      batchId: studentData.batchId || null,
-      status: studentData.status || "active"
-    };
-
-    dbState.students.push(newStudent);
-
-    // Calculate fees installments automatically
-    const totalFees = newStudent.feesAmount;
-    const isQuarterly = newStudent.feesPlan === "quarterly";
-    const numInstallments = isQuarterly ? 4 : 2;
-    const installmentAmount = Math.round(totalFees / numInstallments);
-    const monthsInterval = isQuarterly ? 3 : 6;
-
-    const baseDate = new Date(newStudent.admissionDate);
-    for (let i = 1; i <= numInstallments; i++) {
-      const dueDate = new Date(baseDate);
-      dueDate.setMonth(baseDate.getMonth() + (i - 1) * monthsInterval);
-      
-      const newInstallment: FeeInstallment = {
-        id: `INST-${newStudent.id}-${i}`,
-        studentId: newStudent.id,
-        installmentNumber: i,
-        amount: installmentAmount,
-        dueDate: dueDate.toISOString().split("T")[0],
-        status: "Unpaid",
-        paidAmount: 0
+      const newStudent: Student = {
+        id: studentId,
+        name: req.body.name.trim(),
+        parentName: (req.body.parentName || "").trim(),
+        parentMobile: req.body.parentMobile.trim(),
+        alternateMobile: (req.body.alternateMobile || "").trim(),
+        class: req.body.class || req.body.grade || "Grade 10",
+        schoolName: (req.body.schoolName || "").trim(),
+        schoolTiming: (req.body.schoolTiming || "").trim(),
+        preferredTuitionTiming: (req.body.preferredTuitionTiming || "").trim(),
+        reasonForPreferredTiming: (req.body.reasonForPreferredTiming || "").trim(),
+        subjects: Array.isArray(req.body.subjects) ? req.body.subjects : [],
+        admissionDate,
+        feesAmount,
+        feesPlan,
+        batchId: req.body.batchId || null,
+        status: "active",
+        instituteId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
-      dbState.installments.push(newInstallment);
-    }
 
-    saveDb(dbState);
-    res.status(201).json(newStudent);
-  });
+      await getStudentsCol(instituteId).doc(studentId).set(newStudent);
 
-  app.put("/api/students/:id", (req, res) => {
-    const { id } = req.params;
-    const update = req.body;
-    const index = dbState.students.findIndex((s) => s.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: "Student not found" });
-    }
+      // Generate Fee Installments for this student
+      if (feesAmount > 0) {
+        const dueDates = calculateInstallmentDueDates(admissionDate, feesPlan);
+        const count = dueDates.length;
+        const instAmount = Math.round(feesAmount / count);
+        const batchWrite = firestore.batch();
 
-    const prevStudent = dbState.students[index];
-    const prevPlan = prevStudent.feesPlan;
-    const prevFeesAmount = prevStudent.feesAmount;
-
-    dbState.students[index] = {
-      ...prevStudent,
-      name: update.name !== undefined ? update.name : prevStudent.name,
-      parentName: update.parentName !== undefined ? update.parentName : prevStudent.parentName,
-      parentMobile: update.parentMobile !== undefined ? update.parentMobile : prevStudent.parentMobile,
-      alternateMobile: update.alternateMobile !== undefined ? update.alternateMobile : prevStudent.alternateMobile,
-      class: update.class !== undefined ? update.class : prevStudent.class,
-      schoolName: update.schoolName !== undefined ? update.schoolName : prevStudent.schoolName,
-      schoolTiming: update.schoolTiming !== undefined ? update.schoolTiming : prevStudent.schoolTiming,
-      preferredTuitionTiming: update.preferredTuitionTiming !== undefined ? update.preferredTuitionTiming : prevStudent.preferredTuitionTiming,
-      reasonForPreferredTiming: update.reasonForPreferredTiming !== undefined ? update.reasonForPreferredTiming : prevStudent.reasonForPreferredTiming,
-      subjects: Array.isArray(update.subjects) ? update.subjects : prevStudent.subjects,
-      admissionDate: update.admissionDate !== undefined ? update.admissionDate : prevStudent.admissionDate,
-      feesAmount: update.feesAmount !== undefined ? Number(update.feesAmount) : prevStudent.feesAmount,
-      feesPlan: update.feesPlan !== undefined ? update.feesPlan : prevStudent.feesPlan,
-      batchId: update.batchId !== undefined ? update.batchId : prevStudent.batchId,
-      status: update.status !== undefined ? update.status : prevStudent.status
-    };
-
-    const updatedStudent = dbState.students[index];
-
-    // If Plan or Fees Amount elements changed, we recalculate remaining unpaid installments to avoid breaking historical records
-    if (prevPlan !== updatedStudent.feesPlan || prevFeesAmount !== updatedStudent.feesAmount) {
-      // Filter out unpaid/partially paid installments for recalculation
-      dbState.installments = dbState.installments.filter((inst) => !(inst.studentId === id && inst.status === "Unpaid"));
-      
-      const paidInstallments = dbState.installments.filter((inst) => inst.studentId === id && inst.status !== "Unpaid");
-      const paidTotal = paidInstallments.reduce((sum, inst) => sum + inst.paidAmount, 0);
-      const remainingFees = Math.max(0, updatedStudent.feesAmount - paidTotal);
-
-      const isQuarterly = updatedStudent.feesPlan === "quarterly";
-      const totalNum = isQuarterly ? 4 : 2;
-      const outstandingNum = totalNum - paidInstallments.length;
-
-      if (outstandingNum > 0) {
-        const remainingAmount = Math.round(remainingFees / outstandingNum);
-        const monthsInterval = isQuarterly ? 3 : 6;
-        const baseDate = new Date(updatedStudent.admissionDate);
-
-        for (let i = paidInstallments.length + 1; i <= totalNum; i++) {
-          const dueDate = new Date(baseDate);
-          dueDate.setMonth(baseDate.getMonth() + (i - 1) * monthsInterval);
-
-          const newInstallment: FeeInstallment = {
-            id: `INST-${updatedStudent.id}-${i}`,
-            studentId: updatedStudent.id,
-            installmentNumber: i,
-            amount: remainingAmount,
-            dueDate: dueDate.toISOString().split("T")[0],
+        for (let i = 0; i < count; i++) {
+          const instId = generateId("INST");
+          const installment: FeeInstallment = {
+            id: instId,
+            studentId,
+            installmentNumber: i + 1,
+            amount: instAmount,
+            dueDate: dueDates[i],
             status: "Unpaid",
             paidAmount: 0
           };
-          dbState.installments.push(newInstallment);
+          const ref = getInstallmentsCol(instituteId).doc(instId);
+          batchWrite.set(ref, installment);
         }
+        await batchWrite.commit();
       }
+
+      res.status(201).json(newStudent);
+    } catch (err: any) {
+      console.error(`[Student POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to create student", details: err.message });
     }
-
-    saveDb(dbState);
-    res.json(dbState.students[index]);
   });
 
-  app.delete("/api/students/:id", (req, res) => {
-    const { id } = req.params;
-    dbState.students = dbState.students.filter((s) => s.id !== id);
-    dbState.installments = dbState.installments.filter((inst) => inst.studentId !== id);
-    dbState.attendance = dbState.attendance.filter((att) => att.studentId !== id);
-    saveDb(dbState);
-    res.json({ success: true });
-  });
-
-  // Batches
-  app.get("/api/batches", (req, res) => {
-    res.json(dbState.batches);
-  });
-
-  app.post("/api/batches", (req, res) => {
-    const { name, startTime, endTime, capacity, days } = req.body;
-    const newBatch: Batch = {
-      id: `BTCH-${Math.floor(100 + Math.random() * 900)}`,
-      name: name || "New Tuition Batch",
-      startTime: startTime || "03:00 PM",
-      endTime: endTime || "04:30 PM",
-      capacity: Number(capacity) || 15,
-      days: Array.isArray(days) ? days : ["Mon", "Wed", "Fri"]
-    };
-    dbState.batches.push(newBatch);
-    saveDb(dbState);
-    res.status(201).json(newBatch);
-  });
-
-  app.put("/api/batches/:id", (req, res) => {
-    const { id } = req.params;
-    const update = req.body;
-    const index = dbState.batches.findIndex((b) => b.id === id);
-    if (index === -1) {
-      return res.status(404).json({ error: "Batch not found" });
-    }
-    dbState.batches[index] = {
-      ...dbState.batches[index],
-      name: update.name !== undefined ? update.name : dbState.batches[index].name,
-      startTime: update.startTime !== undefined ? update.startTime : dbState.batches[index].startTime,
-      endTime: update.endTime !== undefined ? update.endTime : dbState.batches[index].endTime,
-      capacity: update.capacity !== undefined ? Number(update.capacity) : dbState.batches[index].capacity,
-      days: Array.isArray(update.days) ? update.days : dbState.batches[index].days
-    };
-    saveDb(dbState);
-    res.json(dbState.batches[index]);
-  });
-
-  app.delete("/api/batches/:id", (req, res) => {
-    const { id } = req.params;
-    dbState.batches = dbState.batches.filter((b) => b.id !== id);
-    // Unassign students from this batch
-    dbState.students = dbState.students.map((s) => s.batchId === id ? { ...s, batchId: null } : s);
-    saveDb(dbState);
-    res.json({ success: true });
-  });
-
-  // Attendance Endpoints
-  app.get("/api/attendance", (req, res) => {
-    const { date, batchId } = req.query;
-    let filtered = dbState.attendance;
-    if (date) {
-      filtered = filtered.filter((a) => a.date === date);
-    }
-    if (batchId) {
-      // Find students in that batch
-      const studentIds = dbState.students.filter((s) => s.batchId === batchId).map((s) => s.id);
-      filtered = filtered.filter((a) => studentIds.includes(a.studentId));
-    }
-    res.json(filtered);
-  });
-
-  app.post("/api/attendance/mark", async (req, res) => {
-    const { date, records } = req.body; // date: YYYY-MM-DD, records: { [studentId]: 'Present'|'Absent' }
-    if (!date || !records) {
-      return res.status(400).json({ error: "Date and records are required" });
+  app.put("/api/students/:id", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const studentId = req.params.id;
+    const validation = validateStudentInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
     }
 
     try {
-      // Gather all absent students to process in isolated loops sorted by Institute ID
-      const absentStudentsToProcess: Student[] = [];
-
-      for (const [studentId, status] of Object.entries(records)) {
-        // Update existing local memory attendance list
-        const existingIdx = dbState.attendance.findIndex((a) => a.date === date && a.studentId === studentId);
-        if (existingIdx !== -1) {
-          dbState.attendance[existingIdx].status = status as "Present" | "Absent";
-        } else {
-          dbState.attendance.push({
-            date,
-            studentId,
-            status: status as "Present" | "Absent"
-          });
-        }
-
-        if (status === "Absent") {
-          let student = dbState.students.find((s) => s.id === studentId);
-          if (!student) {
-            // Fallback load student from Firestore REST API if not found in local dbState memory
-            const fetched = await fetchStudentFromFirestore(studentId);
-            if (fetched) {
-              student = fetched;
-            }
-          }
-          if (student) {
-            absentStudentsToProcess.push(student);
-          }
-        }
+      const docRef = getStudentsCol(instituteId).doc(studentId);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: `Student ${studentId} not found in this institute` });
       }
 
-      // Group student records by instituteId to prevent data leak or mixing
-      const groupedByInstitute: { [instId: string]: Student[] } = {};
-      absentStudentsToProcess.forEach((student) => {
-        const instId = student.instituteId || "default_institute";
-        if (!groupedByInstitute[instId]) {
-          groupedByInstitute[instId] = [];
-        }
-        groupedByInstitute[instId].push(student);
-      });
+      const updates: Partial<Student> = {
+        name: req.body.name.trim(),
+        parentName: (req.body.parentName || "").trim(),
+        parentMobile: req.body.parentMobile.trim(),
+        alternateMobile: (req.body.alternateMobile || "").trim(),
+        class: req.body.class || req.body.grade || "Grade 10",
+        schoolName: (req.body.schoolName || "").trim(),
+        schoolTiming: (req.body.schoolTiming || "").trim(),
+        preferredTuitionTiming: (req.body.preferredTuitionTiming || "").trim(),
+        reasonForPreferredTiming: (req.body.reasonForPreferredTiming || "").trim(),
+        subjects: Array.isArray(req.body.subjects) ? req.body.subjects : [],
+        feesAmount: Number(req.body.feesAmount || 0),
+        feesPlan: req.body.feesPlan === "half-yearly" ? "half-yearly" : "quarterly",
+        batchId: req.body.batchId !== undefined ? req.body.batchId : null,
+        status: req.body.status || "active",
+        updatedAt: new Date().toISOString()
+      };
 
-      // Process each institute's absent loop independently
-      for (const [instId, studentsList] of Object.entries(groupedByInstitute)) {
-        // Fetch specific institute's branding name dynamically from Firestore REST
-        const instituteName = await getInstituteName(instId);
-        
-        // Load live communication settings and limits from Firestore REST
-        const instData = await fetchInstituteFromFirestore(instId);
-        let whatsappSentLocal = instData ? instData.whatsappSent : 0;
-        const isWhatsAppEnabledLocal = instData ? (instData.isWhatsAppEnabled !== false) : true;
-
-        let smsSentLocal = instData ? instData.smsSent : 0;
-        const isSmsEnabledLocal = instData ? (instData.isSmsEnabled !== false) : true;
-
-        console.log(`[API Routing Check] Processing ${studentsList.length} absent students for ${instituteName} (ID: ${instId}) | Plan: PAY_AS_YOU_GO`);
-        console.log(`[API Settings] WhatsApp: Enabled=${isWhatsAppEnabledLocal}, Sent=${whatsappSentLocal}`);
-        console.log(`[API Settings] SMS: Enabled=${isSmsEnabledLocal}, Sent=${smsSentLocal}`);
-
-        for (const student of studentsList) {
-          if (student.parentMobile) {
-            const canSendWhatsApp = isWhatsAppEnabledLocal;
-            const canSendSms = isSmsEnabledLocal;
-
-            let wasWhatsAppSent = false;
-            let wasSmsSent = false;
-
-            if (canSendWhatsApp) {
-              // Send actual HTTP POST template request to WhatsApp API
-              await sendWhatsAppNotification(
-                student.parentMobile,
-                student.name,
-                student.parentName,
-                instituteName
-              );
-              whatsappSentLocal += 1;
-              wasWhatsAppSent = true;
-            } else {
-              console.log(`[WhatsApp Blocked] Limit exhausted or switch is OFF for student ${student.name}`);
-            }
-
-            if (canSendSms) {
-              // Send actual HTTP POST template request to SMS API
-              await sendSmsNotification(
-                student.parentMobile,
-                student.name,
-                student.parentName,
-                instituteName
-              );
-              smsSentLocal += 1;
-              wasSmsSent = true;
-            } else {
-              console.log(`[SMS Blocked] Limit exhausted or switch is OFF for student ${student.name}`);
-            }
-
-            // Record Log Entry locally
-            const alertId = `LOG-${Math.floor(1000 + Math.random() * 9000)}`;
-            
-            let alertText = "";
-            const channels = [];
-            if (wasWhatsAppSent) channels.push("WhatsApp");
-            if (wasSmsSent) channels.push("SMS");
-
-            if (channels.length > 0) {
-              alertText = `Absence Alert (${channels.join(" & ")}): Dear Parent, your child ${student.name} was marked ABSENT today (${date}) at ${instituteName} classes. Please respond with reason.`;
-            } else {
-              alertText = `Absence Alert (Blocked/No Balance): Dear Parent, your child ${student.name} was marked ABSENT today (${date}) at ${instituteName} classes.`;
-            }
-
-            const logEntry: NotificationLog = {
-              id: alertId,
-              studentId: student.id,
-              type: "absent_alert",
-              recipientMobile: student.parentMobile,
-              text: alertText,
-              sentAt: new Date().toISOString(),
-              status: (wasWhatsAppSent || wasSmsSent) ? "Sent" : "Blocked"
-            };
-            
-            dbState.logs.push(logEntry);
-
-            // Write back to Firestore users/{instId} document so it instantly syncs to client admin dashboard logs!
-            if (instId && instId !== "default_institute") {
-              try {
-                const userUrl = `https://firestore.googleapis.com/v1/projects/class-setu-2b8e4/databases/(default)/documents/users/${instId}`;
-                const userRes = await fetch(userUrl);
-                if (userRes.ok) {
-                  const userData = await userRes.json();
-                  const fields = userData.fields || {};
-                  const currentLogsVal = fields.logs?.arrayValue?.values || [];
-                  
-                  // Map log to Firestore Schema structure
-                  const newLogMap = {
-                    mapValue: {
-                      fields: {
-                        id: { stringValue: logEntry.id },
-                        studentId: { stringValue: logEntry.studentId },
-                        type: { stringValue: logEntry.type },
-                        recipientMobile: { stringValue: logEntry.recipientMobile },
-                        text: { stringValue: logEntry.text },
-                        sentAt: { stringValue: logEntry.sentAt },
-                        status: { stringValue: logEntry.status }
-                      }
-                    }
-                  };
-
-                  const updatedLogsVal = [...currentLogsVal, newLogMap];
-
-                  // Patch back to Firestore REST API
-                  const patchUrl = `${userUrl}?updateMask.fieldPaths=logs`;
-                  await fetch(patchUrl, {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      fields: {
-                        logs: {
-                          arrayValue: {
-                            values: updatedLogsVal
-                          }
-                        }
-                      }
-                    })
-                  });
-                  console.log(`[Firestore REST] Added logs trace for absent student ${student.name} on user: ${instId}`);
-                }
-              } catch (writeLogErr) {
-                console.error(`Failed to write logs to Firestore REST on user ${instId}:`, writeLogErr);
-              }
-            }
-          }
-        }
-
-        // Patch final updated counters back to Firestore /institutes/{instId} document
-        if (instId && instId !== "default_institute" && instData) {
-          await updateInstituteBalances(instId, {
-            whatsappSent: whatsappSentLocal,
-            whatsappLeft: 999999,
-            smsSent: smsSentLocal,
-            smsLeft: 999999
-          });
-        }
-      }
-
-      saveDb(dbState);
-      res.json({ success: true, message: "Attendance captured and WhatsApp notifications loops completed successfully." });
+      await docRef.update(updates);
+      res.json({ id: studentId, ...docSnap.data(), ...updates });
     } catch (err: any) {
-      console.error("Failed to mark attendance and trigger notifications:", err);
-      res.status(500).json({ error: "Failed to capture attendance and execute WhatsApp loop: " + err.message });
+      console.error(`[Student PUT] Error for ${instituteId}/${studentId}:`, err);
+      res.status(500).json({ error: "Failed to update student", details: err.message });
     }
   });
 
-  // Attendance Analytics
-  app.get("/api/attendance/analytics", (req, res) => {
-    // Return structured report of date-wise attendance counts
-    const analyticsMap: { [date: string]: { date: string; present: number; absent: number; total: number } } = {};
-    
-    dbState.attendance.forEach((rec) => {
-      if (!analyticsMap[rec.date]) {
-        analyticsMap[rec.date] = { date: rec.date, present: 0, absent: 0, total: 0 };
+  app.delete("/api/students/:id", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const studentId = req.params.id;
+
+    try {
+      const docRef = getStudentsCol(instituteId).doc(studentId);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: `Student ${studentId} not found in this institute` });
       }
-      if (rec.status === "Present") {
-        analyticsMap[rec.date].present += 1;
-      } else {
-        analyticsMap[rec.date].absent += 1;
+
+      await docRef.delete();
+
+      // Clean up installments for deleted student
+      const instSnap = await getInstallmentsCol(instituteId).where("studentId", "==", studentId).get();
+      const batchWrite = firestore.batch();
+      instSnap.docs.forEach(d => batchWrite.delete(d.ref));
+      await batchWrite.commit();
+
+      res.json({ success: true, message: `Student ${studentId} and associated records deleted` });
+    } catch (err: any) {
+      console.error(`[Student DELETE] Error for ${instituteId}/${studentId}:`, err);
+      res.status(500).json({ error: "Failed to delete student", details: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // BATCHES (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/batches", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getBatchesCol(instituteId).get();
+      const batches: Batch[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Batch, "id">)
+      }));
+      res.json(batches);
+    } catch (err: any) {
+      console.error(`[Batches GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch batches", details: err.message });
+    }
+  });
+
+  app.post("/api/batches", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const validation = validateBatchInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
+    }
+
+    try {
+      const batchId = req.body.id || generateId("BTCH");
+      const newBatch: Batch = {
+        id: batchId,
+        name: req.body.name.trim(),
+        startTime: req.body.startTime || "07:00 AM",
+        endTime: req.body.endTime || "08:30 AM",
+        capacity: Number(req.body.capacity) || 15,
+        days: Array.isArray(req.body.days) ? req.body.days : ["Mon", "Wed", "Fri"],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      await getBatchesCol(instituteId).doc(batchId).set(newBatch);
+      res.status(201).json(newBatch);
+    } catch (err: any) {
+      console.error(`[Batch POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to create batch", details: err.message });
+    }
+  });
+
+  app.put("/api/batches/:id", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const batchId = req.params.id;
+    const validation = validateBatchInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
+    }
+
+    try {
+      const docRef = getBatchesCol(instituteId).doc(batchId);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: `Batch ${batchId} not found in this institute` });
       }
-      analyticsMap[rec.date].total += 1;
-    });
 
-    const list = Object.values(analyticsMap).sort((a, b) => a.date.localeCompare(b.date));
-    res.json(list);
+      const updates: Partial<Batch> = {
+        name: req.body.name.trim(),
+        startTime: req.body.startTime || "07:00 AM",
+        endTime: req.body.endTime || "08:30 AM",
+        capacity: Number(req.body.capacity) || 15,
+        days: Array.isArray(req.body.days) ? req.body.days : ["Mon", "Wed", "Fri"],
+        updatedAt: new Date().toISOString()
+      };
+
+      await docRef.update(updates);
+      res.json({ id: batchId, ...docSnap.data(), ...updates });
+    } catch (err: any) {
+      console.error(`[Batch PUT] Error for ${instituteId}/${batchId}:`, err);
+      res.status(500).json({ error: "Failed to update batch", details: err.message });
+    }
   });
 
-  // Fees list
-  app.get("/api/fees/installments", (req, res) => {
-    res.json(dbState.installments);
+  app.delete("/api/batches/:id", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const batchId = req.params.id;
+
+    try {
+      const docRef = getBatchesCol(instituteId).doc(batchId);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: `Batch ${batchId} not found in this institute` });
+      }
+
+      await docRef.delete();
+
+      // Unassign students from this batch
+      const studentsInBatch = await getStudentsCol(instituteId).where("batchId", "==", batchId).get();
+      const batchWrite = firestore.batch();
+      studentsInBatch.docs.forEach(d => batchWrite.update(d.ref, { batchId: null }));
+      await batchWrite.commit();
+
+      res.json({ success: true, message: `Batch ${batchId} deleted and students unassigned` });
+    } catch (err: any) {
+      console.error(`[Batch DELETE] Error for ${instituteId}/${batchId}:`, err);
+      res.status(500).json({ error: "Failed to delete batch", details: err.message });
+    }
   });
 
-  // Pay Fee installment
-  app.post("/api/fees/pay", (req, res) => {
-    const { installmentId, amountPaid } = req.body;
-    const inst = dbState.installments.find((i) => i.id === installmentId);
-    if (!inst) {
-      return res.status(404).json({ error: "Installment record not found" });
+  // -------------------------------------------------------------
+  // ATTENDANCE & WHATSAPP ABSENTEE ALERTS (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/attendance", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getAttendanceCol(instituteId).get();
+      const records: AttendanceRecord[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<AttendanceRecord, "id">)
+      }));
+      res.json(records);
+    } catch (err: any) {
+      console.error(`[Attendance GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch attendance records", details: err.message });
     }
-
-    const payAmount = Number(amountPaid) || 0;
-    const newPaidTotal = inst.paidAmount + payAmount;
-    inst.paidAmount = Math.min(inst.amount, newPaidTotal);
-    inst.paymentDate = new Date().toISOString().split("T")[0];
-
-    if (inst.paidAmount >= inst.amount) {
-      inst.status = "Paid";
-    } else if (inst.paidAmount > 0) {
-      inst.status = "Partially Paid";
-    } else {
-      inst.status = "Unpaid";
-    }
-
-    saveDb(dbState);
-    res.json(inst);
   });
 
-  // Fee automated trigger reminder logs
-  app.post("/api/fees/reminder-trigger", (req, res) => {
-    const { studentId, installmentId } = req.body;
-    const student = dbState.students.find((s) => s.id === studentId);
-    const installment = dbState.installments.find((i) => i.id === installmentId);
-
-    if (!student || !installment) {
-      return res.status(404).json({ error: "Student or installment record not ready" });
+  app.post("/api/attendance/mark", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const validation = validateAttendanceMarkInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
     }
 
-    const reminderId = `LOG-${Math.floor(1000 + Math.random() * 9000)}`;
-    const triggerMsg = `Fee Reminder Update: Hello ${student.parentName}, your child ${student.name} has tuition fees pending of ₹${installment.amount - installment.paidAmount} (Due Date: ${installment.dueDate}) for Plan Type: ${student.feesPlan.toUpperCase()}. Kindly click to settle. - Alpha Coaching`;
-    
-    dbState.logs.push({
-      id: reminderId,
-      studentId,
-      type: "fee_reminder",
-      recipientMobile: student.parentMobile,
-      text: triggerMsg,
-      sentAt: new Date().toISOString(),
-      status: "Sent"
-    });
+    const { date, records } = req.body;
 
-    saveDb(dbState);
-    res.json({ success: true, log: dbState.logs[dbState.logs.length - 1] });
-  });
+    try {
+      const batchWrite = firestore.batch();
+      const absentStudentsToAlert: { studentId: string; status: string }[] = [];
 
-  // Communications / Communication Notice lists
-  app.get("/api/notices", (req, res) => {
-    res.json(dbState.notices);
-  });
+      for (const rec of records) {
+        const docId = `${date}_${rec.studentId}`;
+        const ref = getAttendanceCol(instituteId).doc(docId);
+        batchWrite.set(ref, {
+          date,
+          studentId: rec.studentId,
+          status: rec.status,
+          markedAt: new Date().toISOString()
+        });
 
-  app.post("/api/notices", (req, res) => {
-    const { title, body, recipientType, selectedStudentIds } = req.body;
-    if (!title || !body || !recipientType) {
-      return res.status(400).json({ error: "Title, body, and recipientType are required" });
-    }
+        if (rec.status === "Absent") {
+          absentStudentsToAlert.push(rec);
+        }
+      }
+      await batchWrite.commit();
 
-    const newNotice: Notice = {
-      id: `NTC-${Math.floor(100 + Math.random() * 900)}`,
-      title,
-      body,
-      recipientType,
-      recipients: Array.isArray(selectedStudentIds) ? selectedStudentIds : [],
-      sentAt: new Date().toISOString(),
-      status: "Delivered"
-    };
+      // Dispatch automated WhatsApp alerts for absent students
+      const dispatchedLogs: NotificationLog[] = [];
+      for (const abs of absentStudentsToAlert) {
+        const studentDoc = await getStudentsCol(instituteId).doc(abs.studentId).get();
+        if (studentDoc.exists) {
+          const sData = studentDoc.data() as Student;
+          const mobile = sData.parentMobile || sData.alternateMobile;
+          if (mobile) {
+            const msgText = `Absence Alert: Dear ${sData.parentName || "Parent"}, ${sData.name} was marked ABSENT today (${date}). Please contact institute management if unexpected.`;
+            const waRes = await sendMetaWhatsAppMessage(mobile, {
+              type: "template",
+              templateName: "hello_world",
+              languageCode: "en_US"
+            });
 
-    dbState.notices.push(newNotice);
+            const logId = generateId("LOG");
+            const logEntry: NotificationLog = {
+              id: logId,
+              studentId: sData.id,
+              type: "absent_alert",
+              recipientMobile: mobile,
+              text: msgText,
+              sentAt: new Date().toISOString(),
+              status: waRes.success ? "Sent" : "Failed",
+              medium: "WhatsApp"
+            };
+            await getLogsCol(instituteId).doc(logId).set(logEntry);
+            dispatchedLogs.push(logEntry);
+          }
+        }
+      }
 
-    // Also populate individual notice delivery log entries
-    let targetStudents = dbState.students;
-    if (recipientType === "Selected Students") {
-      targetStudents = dbState.students.filter((s) => newNotice.recipients.includes(s.id));
-    }
-
-    targetStudents.forEach((student) => {
-      dbState.logs.push({
-        id: `LOG-${Math.floor(1000 + Math.random() * 9000)}`,
-        studentId: student.id,
-        type: "notice",
-        recipientMobile: student.parentMobile || student.alternateMobile || "+91 00000 00000",
-        text: `Notice: [${title}] - ${body}`,
-        sentAt: new Date().toISOString(),
-        status: "Sent"
+      res.json({
+        success: true,
+        message: `Marked attendance for ${records.length} students.`,
+        absentCount: absentStudentsToAlert.length,
+        dispatchedLogs
       });
-    });
-
-    saveDb(dbState);
-    res.status(201).json(newNotice);
+    } catch (err: any) {
+      console.error(`[Attendance Mark POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to mark attendance", details: err.message });
+    }
   });
 
-  // Get notifications trace logs
-  app.get("/api/logs", (req, res) => {
-    res.json(dbState.logs);
+  app.post("/api/absent/send-whatsapp", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { studentId, studentName, parentName, parentMobile, date, customMessage, instituteName } = req.body;
+
+    if (!parentMobile) {
+      return res.status(400).json({ error: "Parent mobile is required" });
+    }
+
+    try {
+      const message = customMessage || `Absence Alert: Dear ${parentName || "Parent"}, ${studentName} was marked ABSENT on ${date} at ${instituteName || "ClasSetu"}.`;
+      const waRes = await sendMetaWhatsAppMessage(parentMobile, {
+        type: "template",
+        templateName: "hello_world",
+        languageCode: "en_US"
+      });
+
+      const logId = generateId("LOG");
+      const logEntry: NotificationLog = {
+        id: logId,
+        studentId: studentId || "UNKNOWN",
+        type: "absent_alert",
+        recipientMobile: parentMobile,
+        text: message,
+        sentAt: new Date().toISOString(),
+        status: waRes.success ? "Sent" : "Failed",
+        medium: "WhatsApp"
+      };
+
+      await getLogsCol(instituteId).doc(logId).set(logEntry);
+
+      res.json({
+        success: waRes.success,
+        messageId: waRes.messageId,
+        log: logEntry,
+        error: waRes.error
+      });
+    } catch (err: any) {
+      console.error(`[Absent WhatsApp POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to send absent alert", details: err.message });
+    }
   });
 
-  // Meta WhatsApp Cloud API Test Mode Config Endpoints
-  app.get("/api/whatsapp/config", (req, res) => {
-    const hasToken = Boolean(activeWhatsAppConfig.accessToken);
-    const maskedToken = hasToken
-      ? `${activeWhatsAppConfig.accessToken.substring(0, 6)}...${activeWhatsAppConfig.accessToken.slice(-4)}`
-      : "";
+  app.post("/api/absent/bulk-whatsapp", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { records, instituteName } = req.body;
 
-    res.json({
-      configured: Boolean(activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId),
-      accessToken: activeWhatsAppConfig.accessToken,
-      maskedToken,
-      phoneNumberId: activeWhatsAppConfig.phoneNumberId,
-      businessAccountId: activeWhatsAppConfig.businessAccountId,
-      defaultTemplate: activeWhatsAppConfig.defaultTemplate,
-      languageCode: activeWhatsAppConfig.languageCode
-    });
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ error: "Records array is required" });
+    }
+
+    try {
+      const results: NotificationLog[] = [];
+      for (const item of records) {
+        if (!item.parentMobile) continue;
+        const msg = item.customMessage || `Absence Alert: Dear ${item.parentName || "Parent"}, ${item.studentName} was marked ABSENT on ${item.date} at ${instituteName || "ClasSetu"}.`;
+        const waRes = await sendMetaWhatsAppMessage(item.parentMobile, {
+          type: "template",
+          templateName: "hello_world",
+          languageCode: "en_US"
+        });
+
+        const logId = generateId("LOG");
+        const logEntry: NotificationLog = {
+          id: logId,
+          studentId: item.studentId || "UNKNOWN",
+          type: "absent_alert",
+          recipientMobile: item.parentMobile,
+          text: msg,
+          sentAt: new Date().toISOString(),
+          status: waRes.success ? "Sent" : "Failed",
+          medium: "WhatsApp"
+        };
+        await getLogsCol(instituteId).doc(logId).set(logEntry);
+        results.push(logEntry);
+      }
+
+      res.json({
+        success: true,
+        count: results.length,
+        logs: results
+      });
+    } catch (err: any) {
+      console.error(`[Bulk Absent WhatsApp POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to dispatch bulk absent alerts", details: err.message });
+    }
   });
 
-  app.post("/api/whatsapp/config", (req, res) => {
+  app.get("/api/attendance/analytics", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getAttendanceCol(instituteId).get();
+      const records = snapshot.docs.map(d => d.data() as AttendanceRecord);
+      const total = records.length;
+      const present = records.filter(r => r.status === "Present").length;
+      const absent = records.filter(r => r.status === "Absent").length;
+      const rate = total > 0 ? Math.round((present / total) * 100) : 100;
+
+      res.json({
+        totalRecords: total,
+        presentCount: present,
+        absentCount: absent,
+        averageAttendanceRate: rate
+      });
+    } catch (err: any) {
+      console.error(`[Attendance Analytics] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to compute attendance analytics", details: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // FEE INSTALLMENTS (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/fees/installments", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getInstallmentsCol(instituteId).get();
+      const installments: FeeInstallment[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<FeeInstallment, "id">)
+      }));
+      res.json(installments);
+    } catch (err: any) {
+      console.error(`[Fees GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch fee installments", details: err.message });
+    }
+  });
+
+  app.post("/api/fees/pay", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const validation = validateFeePaymentInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
+    }
+
+    const { installmentId, amount, paymentDate } = req.body;
+
+    try {
+      const docRef = getInstallmentsCol(instituteId).doc(installmentId);
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({ error: `Installment ${installmentId} not found` });
+      }
+
+      const inst = docSnap.data() as FeeInstallment;
+      const payAmount = Number(amount) || inst.amount;
+      const newPaid = Math.min(inst.amount, (inst.paidAmount || 0) + payAmount);
+      const newStatus = newPaid >= inst.amount ? "Paid" : "Partially Paid";
+      const pDate = paymentDate || new Date().toISOString().split("T")[0];
+
+      await docRef.update({
+        paidAmount: newPaid,
+        status: newStatus,
+        paymentDate: pDate
+      });
+
+      res.json({
+        success: true,
+        installment: {
+          ...inst,
+          paidAmount: newPaid,
+          status: newStatus,
+          paymentDate: pDate
+        }
+      });
+    } catch (err: any) {
+      console.error(`[Fee Pay POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to process fee payment", details: err.message });
+    }
+  });
+
+  app.post("/api/fees/reminder-trigger", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { studentId, studentName, parentName, parentMobile, dueAmount, dueDate, instituteName } = req.body;
+
+    if (!parentMobile) {
+      return res.status(400).json({ error: "Parent mobile is required" });
+    }
+
+    try {
+      const msg = `Fee Due Alert: Hello ${parentName || "Parent"}, ${studentName} has a pending fee installment of ₹${dueAmount} due on ${dueDate}. Please settle at ${instituteName || "ClasSetu"}.`;
+      const waRes = await sendMetaWhatsAppMessage(parentMobile, {
+        type: "template",
+        templateName: "hello_world",
+        languageCode: "en_US"
+      });
+
+      const logId = generateId("LOG");
+      const logEntry: NotificationLog = {
+        id: logId,
+        studentId: studentId || "UNKNOWN",
+        type: "fee_reminder",
+        recipientMobile: parentMobile,
+        text: msg,
+        sentAt: new Date().toISOString(),
+        status: waRes.success ? "Sent" : "Failed",
+        medium: "WhatsApp"
+      };
+
+      await getLogsCol(instituteId).doc(logId).set(logEntry);
+
+      res.json({
+        success: waRes.success,
+        log: logEntry,
+        messageId: waRes.messageId
+      });
+    } catch (err: any) {
+      console.error(`[Fee Reminder POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to send fee reminder", details: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // NOTICES (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/notices", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getNoticesCol(instituteId).get();
+      const notices: Notice[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Notice, "id">)
+      }));
+      res.json(notices);
+    } catch (err: any) {
+      console.error(`[Notices GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch notices", details: err.message });
+    }
+  });
+
+  app.post("/api/notices", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const validation = validateNoticeInput(req.body);
+    if (!validation.valid) {
+      return res.status(400).json({ error: "Validation failed", details: validation.errors });
+    }
+
+    try {
+      const noticeId = req.body.id || generateId("NTC");
+      const newNotice: Notice = {
+        id: noticeId,
+        title: req.body.title.trim(),
+        body: req.body.body.trim(),
+        recipientType: req.body.recipientType || "All Students",
+        recipients: Array.isArray(req.body.recipients) ? req.body.recipients : [],
+        sentAt: new Date().toISOString(),
+        status: "Delivered"
+      };
+
+      await getNoticesCol(instituteId).doc(noticeId).set(newNotice);
+      res.status(201).json(newNotice);
+    } catch (err: any) {
+      console.error(`[Notice POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to post notice", details: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // AUDIT & NOTIFICATION LOGS (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/logs", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const snapshot = await getLogsCol(instituteId).get();
+      const logs: NotificationLog[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<NotificationLog, "id">)
+      }));
+      // Sort newest first
+      logs.sort((a, b) => new Date(b.sentAt || 0).getTime() - new Date(a.sentAt || 0).getTime());
+      res.json(logs);
+    } catch (err: any) {
+      console.error(`[Logs GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to fetch logs", details: err.message });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // WHATSAPP CONFIGURATION (TOKEN MASKED - NO RAW TOKEN LEAK)
+  // -------------------------------------------------------------
+  app.get("/api/whatsapp/config", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    try {
+      const doc = await getInstituteDoc(instituteId).get();
+      const data = doc.data() || {};
+      const waConfig: MetaWhatsAppConfig = data.whatsappConfig || activeWhatsAppConfig;
+
+      const token = waConfig.accessToken || "";
+      const hasToken = Boolean(token);
+      // STRICT MASKING: Never leak the raw accessToken
+      const maskedToken = hasToken
+        ? `${token.substring(0, 6)}...${token.slice(-4)}`
+        : "";
+
+      res.json({
+        configured: Boolean(token && waConfig.phoneNumberId),
+        maskedToken, // ONLY MASKED TOKEN RETURNED!
+        phoneNumberId: waConfig.phoneNumberId || "",
+        businessAccountId: waConfig.businessAccountId || "",
+        defaultTemplate: waConfig.defaultTemplate || "hello_world",
+        languageCode: waConfig.languageCode || "en_US"
+      });
+    } catch (err: any) {
+      console.error(`[WhatsApp Config GET] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to retrieve WhatsApp config", details: err.message });
+    }
+  });
+
+  app.post("/api/whatsapp/config", sensitiveLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
     const { accessToken, phoneNumberId, businessAccountId, defaultTemplate, languageCode } = req.body;
 
-    if (accessToken !== undefined) activeWhatsAppConfig.accessToken = String(accessToken).trim();
-    if (phoneNumberId !== undefined) activeWhatsAppConfig.phoneNumberId = String(phoneNumberId).trim();
-    if (businessAccountId !== undefined) activeWhatsAppConfig.businessAccountId = String(businessAccountId).trim();
-    if (defaultTemplate !== undefined) activeWhatsAppConfig.defaultTemplate = String(defaultTemplate).trim() || "hello_world";
-    if (languageCode !== undefined) activeWhatsAppConfig.languageCode = String(languageCode).trim() || "en_US";
+    try {
+      const doc = await getInstituteDoc(instituteId).get();
+      const existingConfig = doc.data()?.whatsappConfig || activeWhatsAppConfig;
 
-    console.log(`[Meta WhatsApp Config Updated] Phone Number ID: ${activeWhatsAppConfig.phoneNumberId}, Token Set: ${Boolean(activeWhatsAppConfig.accessToken)}`);
+      const updatedConfig: MetaWhatsAppConfig = {
+        accessToken: accessToken !== undefined && accessToken !== "" ? String(accessToken).trim() : existingConfig.accessToken,
+        phoneNumberId: phoneNumberId !== undefined ? String(phoneNumberId).trim() : existingConfig.phoneNumberId,
+        businessAccountId: businessAccountId !== undefined ? String(businessAccountId).trim() : existingConfig.businessAccountId,
+        defaultTemplate: defaultTemplate !== undefined ? String(defaultTemplate).trim() || "hello_world" : existingConfig.defaultTemplate,
+        languageCode: languageCode !== undefined ? String(languageCode).trim() || "en_US" : existingConfig.languageCode
+      };
 
-    res.json({
-      success: true,
-      message: "Meta WhatsApp credentials updated successfully",
-      config: {
-        configured: Boolean(activeWhatsAppConfig.accessToken && activeWhatsAppConfig.phoneNumberId),
-        phoneNumberId: activeWhatsAppConfig.phoneNumberId,
-        businessAccountId: activeWhatsAppConfig.businessAccountId,
-        defaultTemplate: activeWhatsAppConfig.defaultTemplate,
-        languageCode: activeWhatsAppConfig.languageCode
-      }
-    });
+      await getInstituteDoc(instituteId).set({ whatsappConfig: updatedConfig }, { merge: true });
+
+      const token = updatedConfig.accessToken || "";
+      const maskedToken = token.length > 8 ? `${token.substring(0, 6)}...${token.slice(-4)}` : (token ? "******" : "");
+
+      res.json({
+        success: true,
+        message: "Meta WhatsApp credentials updated successfully",
+        config: {
+          configured: Boolean(token && updatedConfig.phoneNumberId),
+          maskedToken,
+          phoneNumberId: updatedConfig.phoneNumberId,
+          businessAccountId: updatedConfig.businessAccountId,
+          defaultTemplate: updatedConfig.defaultTemplate,
+          languageCode: updatedConfig.languageCode
+        }
+      });
+    } catch (err: any) {
+      console.error(`[WhatsApp Config POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to save WhatsApp config", details: err.message });
+    }
   });
 
-  app.post("/api/whatsapp/test-send", async (req, res) => {
-    const {
-      recipientPhone,
-      templateName,
-      languageCode,
-      parameters,
-      textMessage,
-      type,
-      configOverride
-    } = req.body;
+  app.post("/api/whatsapp/test-send", sensitiveLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { testMobile, customMessage } = req.body;
 
-    if (!recipientPhone) {
-      return res.status(400).json({ success: false, error: "Recipient phone number is required" });
+    if (!testMobile) {
+      return res.status(400).json({ error: "testMobile is required" });
     }
 
-    const overrideConfig: Partial<MetaWhatsAppConfig> = {};
-    if (configOverride?.accessToken) overrideConfig.accessToken = configOverride.accessToken;
-    if (configOverride?.phoneNumberId) overrideConfig.phoneNumberId = configOverride.phoneNumberId;
+    try {
+      const doc = await getInstituteDoc(instituteId).get();
+      const waConfig: MetaWhatsAppConfig = doc.data()?.whatsappConfig || activeWhatsAppConfig;
 
-    const result = await sendMetaWhatsAppMessage(recipientPhone, {
-      type: type || (textMessage ? "text" : "template"),
-      templateName: templateName || activeWhatsAppConfig.defaultTemplate || "hello_world",
-      languageCode: languageCode || activeWhatsAppConfig.languageCode || "en_US",
-      parameters: Array.isArray(parameters) ? parameters : undefined,
-      textMessage,
-      overrideConfig
-    });
+      const result = await sendMetaWhatsAppMessage(testMobile, {
+        type: "template",
+        templateName: waConfig.defaultTemplate || "hello_world",
+        languageCode: waConfig.languageCode || "en_US",
+        parameters: [],
+        overrideConfig: waConfig
+      });
 
-    if (result.success) {
-      // Log test message into system logs
-      dbState.logs.push({
-        id: `TEST-${Math.floor(1000 + Math.random() * 9000)}`,
+      const logId = generateId("LOG");
+      const logEntry: NotificationLog = {
+        id: logId,
         studentId: "TEST_RECIPIENT",
         type: "notice",
-        recipientMobile: formatWhatsAppNumber(recipientPhone),
-        text: `WhatsApp Test Message: ${textMessage || `Template [${templateName || 'hello_world'}]`}`,
+        recipientMobile: testMobile,
+        text: customMessage || "Meta WhatsApp Cloud API Gateway Verification Test",
         sentAt: new Date().toISOString(),
-        status: "Sent"
+        status: result.success ? "Sent" : "Failed",
+        medium: "WhatsApp"
+      };
+
+      await getLogsCol(instituteId).doc(logId).set(logEntry);
+
+      res.json({
+        success: result.success,
+        message: result.success ? "Test message dispatched successfully" : result.error,
+        details: result
       });
-      saveDb(dbState);
-      return res.json(result);
-    } else {
-      return res.status(400).json(result);
+    } catch (err: any) {
+      console.error(`[WhatsApp Test POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to dispatch test message", details: err.message });
     }
   });
 
-  app.post("/api/fees/send-whatsapp", async (req, res) => {
-    const {
-      recipientPhone,
-      studentName,
-      parentName,
-      amount,
-      dueDate,
-      type, // 'receipt' | 'reminder'
-      instituteName,
-      receiptNo
-    } = req.body;
-
-    if (!recipientPhone) {
-      return res.status(400).json({ success: false, error: "Recipient phone number is required" });
-    }
-
-    const tName = activeWhatsAppConfig.defaultTemplate || "hello_world";
-    const lang = activeWhatsAppConfig.languageCode || "en_US";
-
-    let msgText = type === "receipt"
-      ? `Fee Receipt: Received ₹${amount} for ${studentName} (${receiptNo || "Paid"}). Thank you! - ${instituteName || "Alpha Coaching"}`
-      : `Fee Reminder: Pending fees of ₹${amount} due on ${dueDate || "soon"} for ${studentName}. - ${instituteName || "Alpha Coaching"}`;
-
-    const result = await sendMetaWhatsAppMessage(recipientPhone, {
-      type: "template",
-      templateName: tName,
-      languageCode: lang,
-      parameters: [parentName || studentName, instituteName || "Alpha Coaching"],
-      textMessage: msgText
-    });
-
-    if (result.success) {
-      dbState.logs.push({
-        id: `FEE-${Math.floor(1000 + Math.random() * 9000)}`,
-        studentId: studentName || "STUDENT",
-        type: type === "receipt" ? "notice" : "fee_reminder",
-        recipientMobile: formatWhatsAppNumber(recipientPhone),
-        text: msgText + ` [wamid: ${result.messageId}]`,
-        sentAt: new Date().toISOString(),
-        status: "Delivered (Meta WhatsApp)"
-      });
-      saveDb(dbState);
-      return res.json({ success: true, messageId: result.messageId, status: "Sent" });
-    } else {
-      return res.status(400).json(result);
-    }
-  });
-
-
-  // --- AI BATCH SCHEDULING SYSTEM ---
-
-  app.post("/api/ai/schedule", async (req, res) => {
+  // -------------------------------------------------------------
+  // GEMINI AI BATCH SCHEDULING (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.post("/api/ai/schedule", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
     try {
-      const activeStudents = dbState.students.filter((s) => s.status === "active");
-      const activeBatches = dbState.batches;
+      const [stuSnap, batSnap] = await Promise.all([
+        getStudentsCol(instituteId).get(),
+        getBatchesCol(instituteId).get()
+      ]);
 
-      if (activeStudents.length === 0) {
-        return res.status(400).json({ error: "No active students found for batching scheduling." });
-      }
-      if (activeBatches.length === 0) {
-        return res.status(400).json({ error: "No available batches defined." });
-      }
+      const students = stuSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const batches = batSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      // Let's create an AI prompt describing the batching task
-      const jsonSchemaFormat = `
-      {
-        "assignments": [
-          {
-            "studentId": "identifier of the student",
-            "batchId": "identifier of the assigned batch, matching one of the available batch IDs, or null if no batch works",
-            "reason": "short explanation for why this batch was selected based on school timing, preferred timing constraints"
-          }
-        ]
-      }`;
+      const systemPrompt = `You are the ClasSetu AI Smart Batch Scheduler Assistant.
+Analyze student availability, tuition timing preferences, and current batch capacities.
+Output a JSON object with:
+- "analysis": summary text
+- "assignments": array of { "studentId": string, "batchId": string, "reason": string }`;
 
-      const promptMsg = `
-      You are ClassSetu AI Scheduling Engine. Your task is to auto-assign tuition students to their optimal batches.
-      Here are the strict architectural rules and constraints you MUST fulfill:
-
-      1. TIME-OVERLAP ISOLATION (ZERO ACCIDENTAL OVERLAPS):
-         - You must parse and isolate the student's 'schoolTiming' (e.g., '08:00 AM - 02:00 PM') and compare it strictly against each batch's startTime and endTime.
-         - A student MUST NOT be assigned to a batch if there is any overlap whatsoever with their school hours. No exceptions! If a batch begins before school finishes or during school hours, it is fully disqualified.
-
-      2. CORE PRIORITY MATCH (PREFERENCE ALLIGNMENT):
-         - Look at the student's 'preferredTuitionTiming' (e.g. '03:00 PM - 05:00 PM' or general indicator like 'afternoon', 'evening').
-         - If a student's preferred timing aligns with a batch timing and does not conflict with school hours, you MUST prioritize placing them in that batch immediately.
-         - Do not lazy fallback or return "Retained current batch setup" if a much better compatible slot matching their preferred tuition timing is available and has space.
-
-      3. STRICT CLASS-MATCHING CONSTRAINT:
-         - Read the 'class' property of each student document.
-         - A student can ONLY be assigned to a batch if their class strictly matches the batch's 'targetClass' (or if the batch has no targetClass specified).
-         - Normalize and align categories (e.g., "Grade 10" matches "Class 10th", "Grade 9" matches "Class 9th").
-         - Mutually exclusive tracks like "Grade 12 (JEE)" and "Grade 12 (NEET)" must NEVER be mixed. A JEE student must go to a JEE batch, and a NEET student must go to a NEET batch. They can also connect with generic class levels like "Class 12th" only if no tracking match exists. Do not allocate a student of an entirely different level (e.g., Grade 9) to a different target level batch (e.g., Class 10th).
-
-      4. GRACEFUL FALLBACK STRATEGY (MAXIMIZE PLACEMENT):
-         - Do not automatically return "Unassigned" (batchId: null) or say "Retained current batch setup" if an exact perfect preferred match isn't found.
-         - If a student's preference timing is empty, unspecified, or already full, you MUST allocate them to any alternative non-conflicting operational batch matching their targetClass. Avoid leaving students unassigned if a valid non-conflicting slot of their grade level can seat them.
-      
-      Active available batches to choose from:
-      ${JSON.stringify(activeBatches, null, 2)}
-      
-      Active students awaiting or needing revision of batch placement (including their class affiliation):
-      ${JSON.stringify(
-        activeStudents.map((s) => ({
-          id: s.id,
-          name: s.name,
-          class: s.class, // Passed for matching against targetClass
-          schoolTiming: s.schoolTiming,
-          preferredTuitionTiming: s.preferredTuitionTiming,
-          reasonForPreferredTiming: s.reasonForPreferredTiming,
-          currentBatchId: s.batchId
-        })),
-        null,
-        2
-      )}
-
-      Response format MUST be raw JSON matching structure:
-      ${jsonSchemaFormat}
-      
-      Return valid JSON output only.
-      `;
-
-      // Request to Gemini 3.5-flash
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: promptMsg,
+        model: "gemini-2.5-flash",
+        contents: [
+          { role: "user", parts: [{ text: `${systemPrompt}\n\nStudents:\n${JSON.stringify(students)}\n\nBatches:\n${JSON.stringify(batches)}` }] }
+        ],
         config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              assignments: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    studentId: { type: Type.STRING },
-                    batchId: { type: Type.STRING, nullable: true },
-                    reason: { type: Type.STRING }
-                  },
-                  required: ["studentId", "reason"]
-                }
-              }
-            },
-            required: ["assignments"]
-          }
+          responseMimeType: "application/json"
         }
       });
 
-      const responseText = response.text;
-      if (!responseText) {
-        throw new Error("Empty response received from Gemini AI models.");
-      }
-
-      const parsed = JSON.parse(responseText.trim());
-      res.json(parsed);
-
+      const json = JSON.parse(response.text || "{}");
+      res.json(json);
     } catch (err: any) {
-      console.error("AI Allocation error code:", err);
-      res.status(500).json({ error: "Failed to allocate using AI batching engine: " + err.message });
+      console.error(`[AI Schedule POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to generate AI schedule", details: err.message });
     }
   });
 
-  // Finalize Assignments
-  app.post("/api/ai/finalize", (req, res) => {
-    const { assignments } = req.body; // Array of { studentId: string, batchId: string | null }
+  app.post("/api/ai/finalize", writeLimiter, async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { assignments } = req.body;
+
     if (!Array.isArray(assignments)) {
-      return res.status(400).json({ error: "Invalid allocation data format" });
+      return res.status(400).json({ error: "Assignments array is required" });
     }
 
-    assignments.forEach((asg) => {
-      const studentIdx = dbState.students.findIndex((s) => s.id === asg.studentId);
-      if (studentIdx !== -1) {
-        dbState.students[studentIdx].batchId = asg.batchId;
+    try {
+      const batchWrite = firestore.batch();
+      for (const item of assignments) {
+        if (item.studentId && item.batchId) {
+          const ref = getStudentsCol(instituteId).doc(item.studentId);
+          batchWrite.update(ref, {
+            batchId: item.batchId,
+            updatedAt: new Date().toISOString()
+          });
+        }
       }
-    });
-
-    saveDb(dbState);
-    res.json({ success: true, message: "Assignments saved successfully." });
+      await batchWrite.commit();
+      res.json({ success: true, count: assignments.length });
+    } catch (err: any) {
+      console.error(`[AI Finalize POST] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to finalize schedule", details: err.message });
+    }
   });
 
-  app.get("/api/reports/download", (req, res) => {
-    const { type } = req.query; // 'attendance' | 'fees' | 'batches' | 'revenue'
-    
-    // We can output beautifully structured JSON or text-based CSV format for simulated client download
-    if (type === "fees") {
-      const rows = [["Due Date", "Class", "Student Name", "Installment", "Amount", "Paid Amount", "Status"]];
-      dbState.installments.forEach((inst) => {
-        const stud = dbState.students.find((s) => s.id === inst.studentId);
-        rows.push([
-          inst.dueDate,
-          stud ? stud.class : "",
-          stud ? stud.name : "Unknown",
-          `Installment ${inst.installmentNumber}`,
-          inst.amount.toString(),
-          inst.paidAmount.toString(),
-          inst.status
-        ]);
-      });
-      const csv = rows.map((e) => e.map((val) => `"${val.replace(/"/g, '""')}"`).join(",")).join("\n");
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=fees_report.csv");
-      return res.send(csv);
-    } else if (type === "attendance") {
-      const rows = [["Date", "Class", "Student Name", "Parent Contact", "Status"]];
-      dbState.attendance.forEach((att) => {
-        const stud = dbState.students.find((s) => s.id === att.studentId);
-        rows.push([
-          att.date,
-          stud ? stud.class : "",
-          stud ? stud.name : "Unknown",
-          stud ? stud.parentMobile : "",
-          att.status
-        ]);
-      });
-      const csv = rows.map((e) => e.map((val) => `"${val.replace(/"/g, '""')}"`).join(",")).join("\n");
-      res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=attendance_report.csv");
-      return res.send(csv);
-    } else {
-      // Default summary report
-      const rows = [["Metric", "Value"]];
-      const activeStudents = dbState.students.filter((s) => s.status === "active").length;
-      const totalRevenue = dbState.installments.reduce((sum, inst) => sum + inst.paidAmount, 0);
-      const pendingFees = dbState.installments.reduce((sum, inst) => inst.status !== "Paid" ? sum + (inst.amount - inst.paidAmount) : sum, 0);
-      
-      rows.push(["Total Active Students", activeStudents.toString()]);
-      rows.push(["Total Revenue Collected", `INR ${totalRevenue}`]);
-      rows.push(["Outstanding Pending Fees", `INR ${pendingFees}`]);
-      rows.push(["Total Defined Batches", dbState.batches.length.toString()]);
+  // -------------------------------------------------------------
+  // REPORTS DOWNLOAD (Scoped to req.instituteId)
+  // -------------------------------------------------------------
+  app.get("/api/reports/download", async (req: AuthenticatedRequest, res) => {
+    const instituteId = req.instituteId!;
+    const { type } = req.query;
 
-      const csv = rows.map((e) => e.map((val) => `"${val.replace(/"/g, '""')}"`).join(",")).join("\n");
+    try {
+      if (type === "students") {
+        const snap = await getStudentsCol(instituteId).get();
+        const students = snap.docs.map(d => d.data() as Student);
+        let csv = "ID,Name,Parent Name,Parent Mobile,Class,Fees Amount,Status\n";
+        students.forEach(s => {
+          csv += `"${s.id}","${s.name}","${s.parentName}","${s.parentMobile}","${s.class}",${s.feesAmount},"${s.status}"\n`;
+        });
+        res.setHeader("Content-Type", "text/csv");
+        res.setHeader("Content-Disposition", 'attachment; filename="students.csv"');
+        return res.send(csv);
+      }
+
+      const snap = await getAttendanceCol(instituteId).get();
+      const records = snap.docs.map(d => d.data() as AttendanceRecord);
+      let csv = "Date,Student ID,Status\n";
+      records.forEach(r => {
+        csv += `"${r.date}","${r.studentId}","${r.status}"\n`;
+      });
       res.setHeader("Content-Type", "text/csv");
-      res.setHeader("Content-Disposition", "attachment; filename=general_report.csv");
+      res.setHeader("Content-Disposition", 'attachment; filename="attendance.csv"');
       return res.send(csv);
+    } catch (err: any) {
+      console.error(`[Reports Download] Error for ${instituteId}:`, err);
+      res.status(500).json({ error: "Failed to generate report", details: err.message });
     }
   });
 
   return app;
 }
 
+// ==========================================
+// 8. SERVER BOOTSTRAP (Dev & Production)
+// ==========================================
 async function startServer() {
+  const isServerless = process.env.NETLIFY === "true" || process.env.LAMBDA_TASK_ROOT !== undefined;
+  if (isServerless) {
+    return;
+  }
+
   const app = await createExpressApp();
 
-  // --- VITE MIDDLEWARE SETUP ---
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`ClassSetu server booting up on http://localhost:${PORT}`);
+    console.log(`ClasSetu secure server running on http://localhost:${PORT}`);
   });
 }
 
-if (!isServerless) {
-  startServer();
-}
+startServer();

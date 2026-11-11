@@ -174,60 +174,62 @@ export default function BillingManagerView({
         </div>
 
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div className="space-y-2 bg-slate-950/75 backdrop-blur-md p-4 rounded-2xl border border-white/10 max-w-xl shadow-lg">
+          {/* Target Element 1: Profile title and status card */}
+          <div className="space-y-2 bg-white/95 backdrop-blur-md p-5 rounded-2xl border-2 border-emerald-500/30 max-w-xl shadow-xl">
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="p-2 bg-purple-500/20 border border-purple-400/30 rounded-xl text-purple-300">
+              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 shadow-sm">
                 <CreditCard className="w-5 h-5" />
               </div>
-              <h2 className="text-xl md:text-2xl font-black font-display tracking-tight text-white">
+              <h2 className="text-xl md:text-2xl font-black font-display tracking-tight text-emerald-950">
                 Billing & Gateway Profile
               </h2>
-              <span className="bg-purple-500/30 text-purple-200 border border-purple-400/30 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse"></span>
+              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                 Pay As You Go
               </span>
             </div>
-            <p className="text-slate-200 text-xs md:text-sm leading-relaxed">
+            <p className="text-slate-700 text-xs md:text-sm font-medium leading-relaxed">
               Complete transparency over WhatsApp Cloud API and SMS communication traffic with dynamic monthly settlement.
             </p>
           </div>
 
           {/* Action buttons */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* Target Element 2: Download Statement button */}
             <button
               onClick={handleDownloadStatement}
               disabled={downloading}
-              className="px-4 py-2.5 bg-slate-900/85 hover:bg-slate-900 text-white rounded-xl text-xs font-bold border border-white/20 hover:border-white/40 transition-all flex items-center gap-2 cursor-pointer shadow-lg backdrop-blur-md active:scale-95"
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold border border-emerald-500 hover:border-emerald-400 transition-all flex items-center gap-2 cursor-pointer shadow-lg active:scale-95"
             >
               {downloading ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-purple-400" />
+                <RefreshCw className="w-4 h-4 animate-spin text-white" />
               ) : (
-                <Download className="w-4 h-4 text-purple-400" />
+                <Download className="w-4 h-4 text-white" />
               )}
               <span>Download Statement</span>
             </button>
           </div>
         </div>
 
-        {/* Quick Highlights Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-4 border-t border-white/15 bg-slate-950/75 backdrop-blur-md rounded-2xl p-4 border relative z-10 shadow-lg">
+        {/* Target Element 3: Quick Highlights Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-4 border-t border-emerald-200/40 bg-white/95 backdrop-blur-md rounded-2xl p-4 border-2 border-emerald-500/20 relative z-10 shadow-xl">
           <div>
-            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Billing Period</span>
-            <span className="text-xs md:text-sm font-black text-white font-mono mt-0.5 block">{selectedMonth}</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Billing Period</span>
+            <span className="text-xs md:text-sm font-black text-slate-900 font-mono mt-0.5 block">{selectedMonth}</span>
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Plan Type</span>
-            <span className="text-xs md:text-sm font-black text-emerald-400 mt-0.5 block">Uncapped Post-Paid</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Plan Type</span>
+            <span className="text-xs md:text-sm font-black text-emerald-700 mt-0.5 block">Uncapped Post-Paid</span>
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Gateway Status</span>
-            <span className="text-xs md:text-sm font-black text-purple-300 mt-0.5 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 inline" /> 100% Online
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Gateway Status</span>
+            <span className="text-xs md:text-sm font-black text-emerald-800 mt-0.5 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 inline" /> 100% Online
             </span>
           </div>
           <div>
-            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-wider block">Total Dispatches</span>
-            <span className="text-xs md:text-sm font-black text-white font-mono mt-0.5 block">{totalSent} Messages</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Dispatches</span>
+            <span className="text-xs md:text-sm font-black text-slate-900 font-mono mt-0.5 block">{totalSent} Messages</span>
           </div>
         </div>
       </div>
@@ -317,38 +319,46 @@ export default function BillingManagerView({
           </div>
         </div>
 
-        {/* Card 3: Combined Monthly Settlement Card */}
-        <div className="bg-gradient-to-br from-purple-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-sm flex flex-col justify-between border border-purple-800/40 relative overflow-hidden">
+        {/* Card 3: Combined Monthly Settlement Card - Styled in White & Green */}
+        <div className="bg-white rounded-2xl p-6 text-slate-800 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between border-2 border-emerald-500/30 relative overflow-hidden bg-gradient-to-b from-white via-white to-emerald-50/40">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="p-2 bg-purple-500/20 text-purple-300 rounded-lg text-lg">🧾</span>
-                <h3 className="text-sm font-black uppercase tracking-wider text-purple-200">Current Ledger Summary</h3>
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 text-base flex items-center justify-center">
+                  🧾
+                </span>
+                <div>
+                  <h3 className="text-sm font-extrabold uppercase tracking-wider text-emerald-950">Current Ledger Summary</h3>
+                  <p className="text-[11px] text-emerald-700/80 font-medium">Estimated Monthly Billing</p>
+                </div>
               </div>
-              <span className="text-[10px] font-black uppercase tracking-wider bg-purple-500/30 text-purple-300 px-2 py-0.5 rounded border border-purple-400/20">
+              <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-200">
                 Pay As You Go
               </span>
             </div>
 
-            <div className="space-y-2 pt-1">
-              <div className="flex justify-between items-center text-xs text-purple-200/80">
-                <span>WhatsApp Messages ({whatsappSent})</span>
-                <span className="font-mono font-bold text-white">₹{waTotalCost}</span>
+            <div className="bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 space-y-2.5">
+              <div className="flex justify-between items-center text-xs text-slate-600">
+                <span className="font-medium">WhatsApp Messages ({whatsappSent})</span>
+                <span className="font-mono font-bold text-slate-900">₹{waTotalCost}</span>
               </div>
-              <div className="flex justify-between items-center text-xs text-purple-200/80">
-                <span>SMS Messages ({smsSent})</span>
-                <span className="font-mono font-bold text-white">₹{smsTotalCost}</span>
+              <div className="flex justify-between items-center text-xs text-slate-600">
+                <span className="font-medium">SMS Messages ({smsSent})</span>
+                <span className="font-mono font-bold text-slate-900">₹{smsTotalCost}</span>
               </div>
-              <div className="pt-3 border-t border-purple-800/60 flex justify-between items-baseline">
-                <span className="text-xs font-bold uppercase tracking-wider text-purple-300">Estimated Total Bill</span>
-                <span className="text-3xl font-black font-mono text-emerald-400">₹{estimatedTotalCost}</span>
+              <div className="pt-3 border-t border-emerald-200/70 flex justify-between items-baseline">
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-emerald-950 block">Estimated Total Bill</span>
+                  <span className="text-[10px] text-emerald-700">Post-paid settlement</span>
+                </div>
+                <span className="text-3xl font-black font-mono text-emerald-600">₹{estimatedTotalCost}</span>
               </div>
             </div>
           </div>
 
-          <div className="bg-purple-950/60 rounded-xl p-3 border border-purple-800/50 mt-4 text-[11px] text-purple-300 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-400 flex-shrink-0" />
-            <span>Automated settlement will be generated at the end of the monthly billing cycle.</span>
+          <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200 mt-4 text-[11px] text-emerald-800 flex items-center gap-2.5 shadow-sm">
+            <Sparkles className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <span className="font-medium">Automated settlement will be generated at the end of the monthly billing cycle.</span>
           </div>
         </div>
 

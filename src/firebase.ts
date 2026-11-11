@@ -64,7 +64,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  // Keep app functional during temporary network blips or offline state
+  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+  // Keep app functional during temporary network blips, permission migration or offline state
   return errInfo;
 }

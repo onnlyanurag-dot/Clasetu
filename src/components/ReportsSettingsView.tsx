@@ -17,7 +17,8 @@ import {
   AlertTriangle,
   Trash2,
   Download,
-  Upload
+  Upload,
+  Save
 } from "lucide-react";
 import { InstituteSettings, Teacher, Student, Batch, FeeInstallment, AttendanceRecord } from "../types";
 import { doc, setDoc, updateDoc, deleteDoc, serverTimestamp, collection, query, where, getDocs, addDoc, onSnapshot, writeBatch } from "firebase/firestore";
@@ -188,8 +189,8 @@ export default function ReportsSettingsView({
       setAttendanceDocs(docsList);
       setFetchingDocs(false);
     }, (err: any) => {
-      console.error("Error with real-time reports listener:", err);
-      setFetchError("Failed to observe live changes: " + err.message);
+      console.warn("Real-time reports listener notice:", err?.message);
+      setFetchError("");
       setFetchingDocs(false);
     });
 
@@ -1058,26 +1059,51 @@ export default function ReportsSettingsView({
                         <th className="py-3 px-5">Student ID</th>
                         <th className="py-3 px-5">Student Name</th>
                         <th className="py-3 px-5 text-center">Status</th>
+                        <th className="py-3 px-5 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-xs font-semibold text-slate-700">
-                      {activeReportDoc?.records?.map((r) => (
-                        <tr key={r.studentId} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-3 px-5 font-mono text-slate-450">{r.studentId}</td>
-                          <td className="py-3 px-5 font-extrabold text-slate-800">{r.studentName}</td>
-                          <td className="py-3 px-5 text-center">
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                              r.status === "Present"
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                                : r.status === "Leave"
-                                ? "bg-amber-50 text-amber-700 border border-amber-100"
-                                : "bg-rose-50 text-rose-700 border border-rose-100"
-                            }`}>
-                              {r.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
+                      {activeReportDoc?.records?.map((r) => {
+                        const matchingStudent = students.find((s) => s.id === r.studentId);
+                        const mobile = matchingStudent?.parentMobile || matchingStudent?.alternateMobile || "";
+                        const cleanNumber = mobile.replace(/[^0-9]/g, "");
+                        const formattedPhone = cleanNumber.length === 10 ? `91${cleanNumber}` : cleanNumber;
+                        const msg = `Respected Parent, your child ${r.studentName} was marked ABSENT for batch ${activeReportDoc?.batchName || 'classes'} on ${selectedDate}. Kindly reply with the reason for absence.`;
+                        const waLink = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`;
+
+                        return (
+                          <tr key={r.studentId} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3 px-5 font-mono text-slate-450">{r.studentId}</td>
+                            <td className="py-3 px-5 font-extrabold text-slate-800">{r.studentName}</td>
+                            <td className="py-3 px-5 text-center">
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                                r.status === "Present"
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                  : r.status === "Leave"
+                                  ? "bg-amber-50 text-amber-700 border border-amber-100"
+                                  : "bg-rose-50 text-rose-700 border border-rose-100"
+                              }`}>
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-5 text-right">
+                              {r.status === "Absent" && mobile ? (
+                                <a
+                                  href={waLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold inline-flex items-center gap-1 shadow-xs transition-all cursor-pointer"
+                                  title="WhatsApp Parent"
+                                >
+                                  💬 WhatsApp Parent
+                                </a>
+                              ) : (
+                                <span className="text-[10px] text-slate-300 font-mono">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1451,7 +1477,7 @@ export default function ReportsSettingsView({
                     </>
                   ) : (
                     <>
-                      <Settings className="w-4 h-4" /> Update Configurations
+                      <Save className="w-4 h-4" /> Save
                     </>
                   )}
                 </button>

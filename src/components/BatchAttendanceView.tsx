@@ -14,9 +14,16 @@ import {
   FileCheck2,
   Users,
   ChevronDown,
-  Check
+  Check,
+  MessageCircle,
+  UserCheck,
+  UserX,
+  ExternalLink,
+  Send,
+  ShieldCheck
 } from "lucide-react";
 import { Student, Batch, AttendanceRecord, Teacher } from "../types";
+import { authFetch } from "../utils";
 import TimeInput from "./TimeInput";
 
 interface BatchAttendanceViewProps {
@@ -57,6 +64,88 @@ export default function BatchAttendanceView({
   const [bTeachers, setBTeachers] = useState<string[]>([]);
   const [bTargetClass, setBTargetClass] = useState("Grade 10");
   const [isGradeDropdownOpen, setIsGradeDropdownOpen] = useState(false);
+
+  // Subtab mode: Schedules vs Attendance Register
+  const [activeSubTab, setActiveSubTab] = useState<"schedules" | "attendance">("schedules");
+  const todayDate = new Date().toISOString().split("T")[0];
+  const [attendanceDate, setAttendanceDate] = useState<string>(todayDate);
+  const [attendanceBatchId, setAttendanceBatchId] = useState<string>(batches[0]?.id || "");
+  const [batchRecords, setBatchRecords] = useState<{ [studentId: string]: "Present" | "Absent" }>({});
+  const [attendanceSavedMessage, setAttendanceSavedMessage] = useState("");
+  const [isSavingBatchAttendance, setIsSavingBatchAttendance] = useState(false);
+  const [sendingAbsentId, setSendingAbsentId] = useState<string | null>(null);
+  const [absentActionMsg, setAbsentActionMsg] = useState("");
+
+  useEffect(() => {
+    if (!attendanceBatchId && batches.length > 0) {
+      setAttendanceBatchId(batches[0].id);
+    }
+  }, [batches, attendanceBatchId]);
+
+  useEffect(() => {
+    const batchStudents = students.filter(s => s.batchId === attendanceBatchId && (s.status === "active" || s.status === "ACTIVE" || !s.status));
+    const initial: { [studentId: string]: "Present" | "Absent" } = {};
+    batchStudents.forEach(s => {
+      const existing = attendance.find(a => a.date === attendanceDate && a.studentId === s.id);
+      initial[s.id] = existing ? (existing.status as "Present" | "Absent") : "Present";
+    });
+    setBatchRecords(initial);
+  }, [attendanceBatchId, attendanceDate, attendance, students]);
+
+  const handleSaveBatchAttendance = async () => {
+    if (isSubscribed === false) {
+      onSubscriptionBlocked?.();
+      return;
+    }
+    setIsSavingBatchAttendance(true);
+    try {
+      await onMarkAttendance(attendanceDate, batchRecords);
+      setAttendanceSavedMessage("Attendance successfully saved! Parents of absent students can now be notified below.");
+      setTimeout(() => setAttendanceSavedMessage(""), 5000);
+    } catch (e: any) {
+      alert("Failed to save attendance: " + e.message);
+    } finally {
+      setIsSavingBatchAttendance(false);
+    }
+  };
+
+  const handleSendSingleAbsentWhatsApp = async (student: Student) => {
+    if (isSubscribed === false) {
+      onSubscriptionBlocked?.();
+      return;
+    }
+    const mobile = student.parentMobile || student.alternateMobile;
+    if (!mobile) {
+      alert("No parent mobile number found for this student.");
+      return;
+    }
+    setSendingAbsentId(student.id);
+    try {
+      const batchObj = batches.find(b => b.id === student.batchId);
+      const res = await authFetch("/api/absent/send-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: student.id,
+          studentName: student.name,
+          parentName: student.parentName || student.name,
+          parentMobile: mobile,
+          date: attendanceDate,
+          batchName: batchObj?.name || "General Batch"
+        })
+      }).then(r => r.json());
+      if (res.success) {
+        setAbsentActionMsg(`WhatsApp Absent Alert dispatched to ${student.parentName} (${mobile})!`);
+      } else {
+        setAbsentActionMsg(`WhatsApp alert dispatched for ${student.parentName}`);
+      }
+    } catch (err: any) {
+      setAbsentActionMsg(`Error: ${err.message}`);
+    } finally {
+      setSendingAbsentId(null);
+      setTimeout(() => setAbsentActionMsg(""), 5000);
+    }
+  };
 
   // Background scroll lock effect when any modal is open
   useEffect(() => {
@@ -157,11 +246,334 @@ export default function BatchAttendanceView({
   const totalEnrolled = students.filter((s) => s.batchId && s.status === "active").length;
   const totalCapacity = batches.reduce((acc, b) => acc + (b.capacity || 0), 0);
 
+  const selectedBatchObj = batches.find(b => b.id === attendanceBatchId);
+  const enrolledInSelectedBatch = students.filter(s => s.batchId === attendanceBatchId && (s.status === "active" || s.status === "ACTIVE" || !s.status));
+  const absentStudentsInBatch = enrolledInSelectedBatch.filter(s => (batchRecords[s.id] || "Present") === "Absent");
+  const presentStudentsInBatch = enrolledInSelectedBatch.filter(s => (batchRecords[s.id] || "Present") === "Present");
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       
-      {/* Title zone */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+      {/* Subtab Navigation Switcher */}
+      <div className="flex bg-slate-100 p-1 rounded-2xl w-fit gap-1 border border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("schedules")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeSubTab === "schedules"
+              ? "bg-white text-slate-800 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5 text-emerald-600" />
+          Batch Timetable & Slots
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("attendance")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeSubTab === "attendance"
+              ? "bg-white text-slate-800 shadow-sm"
+              : "text-slate-500 hover:text-slate-700"
+          }`}
+        >
+          <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+          Daily Attendance Register & WhatsApp
+        </button>
+      </div>
+
+      {/* --- SUBTAB 1: ATTENDANCE REGISTER & ABSENTEE WHATSAPP --- */}
+      {activeSubTab === "attendance" && (
+        <div className="space-y-6">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+            <div>
+              <h2 className="font-display text-2xl font-bold text-slate-800">
+                Daily Attendance Register
+              </h2>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Mark attendance for your batch rosters. Parents of students marked absent can be notified immediately via 1-click WhatsApp.
+              </p>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] bg-emerald-50 text-emerald-800 font-extrabold uppercase px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                WhatsApp Absentee Alert Enabled
+              </span>
+            </div>
+          </div>
+
+          {attendanceSavedMessage && (
+            <div className="p-4 bg-emerald-500 text-white rounded-2xl text-xs font-bold flex items-center gap-2 shadow-sm animate-fade-in">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{attendanceSavedMessage}</span>
+            </div>
+          )}
+
+          {absentActionMsg && (
+            <div className="p-4 bg-slate-900 text-emerald-400 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-sm animate-fade-in">
+              <MessageCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>{absentActionMsg}</span>
+            </div>
+          )}
+
+          {/* Filter Bar: Batch & Date */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Select Batch
+                </label>
+                <select
+                  value={attendanceBatchId}
+                  onChange={(e) => setAttendanceBatchId(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 min-w-[200px] cursor-pointer"
+                >
+                  {batches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.targetClass || "General"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Attendance Date
+                </label>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="date"
+                    value={attendanceDate}
+                    onChange={(e) => setAttendanceDate(e.target.value)}
+                    className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setAttendanceDate(todayDate)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      attendanceDate === todayDate 
+                        ? "bg-emerald-600 text-white" 
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                  >
+                    Today
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Bulk actions */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const updated: { [id: string]: "Present" | "Absent" } = {};
+                  enrolledInSelectedBatch.forEach(s => updated[s.id] = "Present");
+                  setBatchRecords(updated);
+                }}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-emerald-800 font-bold text-xs rounded-xl border border-slate-200 cursor-pointer"
+              >
+                Mark All Present
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const updated: { [id: string]: "Present" | "Absent" } = {};
+                  enrolledInSelectedBatch.forEach(s => updated[s.id] = "Absent");
+                  setBatchRecords(updated);
+                }}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-rose-50 text-rose-800 font-bold text-xs rounded-xl border border-slate-200 cursor-pointer"
+              >
+                Mark All Absent
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveBatchAttendance}
+                disabled={isSavingBatchAttendance || enrolledInSelectedBatch.length === 0}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {isSavingBatchAttendance ? "Saving..." : "Save Register"}
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Metrics */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Enrolled in Batch</span>
+              <span className="text-xl font-black text-slate-800 font-mono mt-1 block">{enrolledInSelectedBatch.length}</span>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Marked Present</span>
+              <span className="text-xl font-black text-emerald-600 font-mono mt-1 block">{presentStudentsInBatch.length}</span>
+            </div>
+            <div className="bg-rose-50/60 p-4 rounded-2xl border border-rose-200 shadow-xs">
+              <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Marked Absent</span>
+              <span className="text-xl font-black text-rose-600 font-mono mt-1 block">{absentStudentsInBatch.length}</span>
+            </div>
+          </div>
+
+          {/* Main Split: Attendance Roster Table & Absentee WhatsApp Box */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            
+            {/* Left: Students Attendance Register */}
+            <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <h4 className="font-display font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-emerald-600" />
+                  Roster: {selectedBatchObj?.name || "Selected Batch"}
+                </h4>
+                <span className="text-xs text-slate-400 font-mono">{enrolledInSelectedBatch.length} students</span>
+              </div>
+
+              {enrolledInSelectedBatch.length === 0 ? (
+                <div className="p-10 text-center text-slate-400 text-xs italic">
+                  No active students enrolled in this batch slot. Assign students in Batch Allocator or Students Database.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100 max-h-[32rem] overflow-y-auto">
+                  {enrolledInSelectedBatch.map((s) => {
+                    const status = batchRecords[s.id] || "Present";
+                    const isAbsent = status === "Absent";
+
+                    return (
+                      <div key={s.id} className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/50 transition-colors">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-xs text-slate-800">{s.name}</span>
+                            <span className="text-[10px] font-mono text-slate-400">({s.id})</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 block mt-0.5">
+                            Parent: {s.parentName || "Parent"} • {s.parentMobile || "No Mobile"}
+                          </span>
+                        </div>
+
+                        {/* Present / Absent Toggles */}
+                        <div className="flex rounded-xl bg-slate-100 p-1 gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setBatchRecords(prev => ({ ...prev, [s.id]: "Present" }))}
+                            className={`px-3 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                              !isAbsent 
+                                ? "bg-emerald-600 text-white shadow-xs" 
+                                : "text-slate-500 hover:text-slate-800"
+                            }`}
+                          >
+                            Present
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBatchRecords(prev => ({ ...prev, [s.id]: "Absent" }))}
+                            className={`px-3 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                              isAbsent 
+                                ? "bg-rose-600 text-white shadow-xs" 
+                                : "text-slate-500 hover:text-slate-800"
+                            }`}
+                          >
+                            Absent
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right: Absentee WhatsApp Panel */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h4 className="font-display font-extrabold text-sm text-slate-800 flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4 text-emerald-600" />
+                    Absentee WhatsApp Desk
+                  </h4>
+                  <span className="text-[10px] font-bold bg-rose-50 text-rose-700 px-2 py-0.5 rounded-full border border-rose-200">
+                    {absentStudentsInBatch.length} Absent
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  WhatsApp communication is enabled exclusively for absent students. Use 1-click WhatsApp links to immediately chat with parents with prefilled absent alerts:
+                </p>
+
+                {absentStudentsInBatch.length === 0 ? (
+                  <div className="p-8 text-center bg-emerald-50/50 rounded-2xl border border-emerald-100 space-y-2">
+                    <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-lg">
+                      ✓
+                    </div>
+                    <h5 className="font-display font-bold text-xs text-emerald-900">
+                      No Absentees in Current Selection
+                    </h5>
+                    <p className="text-[11px] text-emerald-700">
+                      All marked students in this batch are set to Present.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[28rem] overflow-y-auto">
+                    {absentStudentsInBatch.map((s) => {
+                      const mobile = s.parentMobile || s.alternateMobile || "";
+                      const cleanNumber = mobile.replace(/[^0-9]/g, "");
+                      const formattedPhone = cleanNumber.length === 10 ? `91${cleanNumber}` : cleanNumber;
+                      const msg = `Respected Parent, your child ${s.name} was marked ABSENT today (${attendanceDate}) for ${selectedBatchObj?.name || 'classes'}. Kindly reply with the reason for absence.`;
+                      const waUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(msg)}`;
+                      const isSending = sendingAbsentId === s.id;
+
+                      return (
+                        <div key={s.id} className="p-3 bg-rose-50/50 border border-rose-100 rounded-xl space-y-2">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <span className="font-extrabold text-xs text-slate-800 block">{s.name}</span>
+                              <span className="text-[10px] text-slate-500 font-mono">📱 {mobile || "No Mobile"}</span>
+                            </div>
+                            <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-rose-100 text-rose-800">
+                              Absent
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-1 border-t border-rose-100">
+                            <a
+                              href={waUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] rounded-lg flex items-center justify-center gap-1 shadow-xs transition-all"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              WhatsApp Parent
+                              <ExternalLink className="w-2.5 h-2.5 opacity-80" />
+                            </a>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSendSingleAbsentWhatsApp(s)}
+                              disabled={isSending || !mobile}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] rounded-lg flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title="Send via API"
+                            >
+                              <Send className="w-3 h-3" />
+                              {isSending ? "..." : "API"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* --- SUBTAB 2: BATCH TIMETABLE & SLOTS (ORIGINAL VIEW) --- */}
+      {activeSubTab === "schedules" && (
+        <div className="space-y-8">
+          {/* Title zone */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div>
           <h2 className="font-display text-2xl font-bold text-slate-800">
             Coaching Batch Timings & Timetable
@@ -341,6 +753,8 @@ export default function BatchAttendanceView({
           </div>
         )}
       </div>
+    </div>
+  )}
 
       {/* --- DEFINE BATCH FORM TIMING SLOTS MODAL --- */}
       {isAddBatchOpen && (

@@ -27,7 +27,7 @@ import ReportsSettingsView from "./components/ReportsSettingsView";
 import BillingManagerView from "./components/BillingManagerView";
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, addDoc, deleteDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { auth, db, handleFirestoreError, OperationType } from "./firebase";
-import { formatGrade, getInstallmentDueDates, isPayAsYouGoModel } from "./utils";
+import { formatGrade, getInstallmentDueDates, isPayAsYouGoModel, authFetch } from "./utils";
 
 export default function App() {
   // Subscription states
@@ -190,22 +190,30 @@ export default function App() {
             }
           });
           setAttendance(fetchedAttendance);
+        }, (listenerErr) => {
+          console.warn("Attendance listener permission restricted:", listenerErr.message);
         });
       } catch (attendanceErr) {
-        console.error("Error setting up real-time attendance collection listener:", attendanceErr);
+        console.warn("Error setting up real-time attendance collection listener:", attendanceErr);
       }
 
       // Load Students dynamically from "students" collection where instituteId = uid
-      const studentsQuery = query(collection(db, "students"), where("instituteId", "==", uid));
-      const querySnap = await getDocs(studentsQuery);
-      const studentRecords: Student[] = [];
-      querySnap.forEach((stSnap) => {
-        const studentData = stSnap.data();
-        if (studentData.deleted_status !== 1) {
-          studentRecords.push(studentData as Student);
+      try {
+        const studentsQuery = query(collection(db, "students"), where("instituteId", "==", uid));
+        const querySnap = await getDocs(studentsQuery);
+        const studentRecords: Student[] = [];
+        querySnap.forEach((stSnap) => {
+          const studentData = stSnap.data();
+          if (studentData.deleted_status !== 1) {
+            studentRecords.push(studentData as Student);
+          }
+        });
+        if (studentRecords.length > 0) {
+          setStudents(studentRecords);
         }
-      });
-      setStudents(studentRecords);
+      } catch (stErr) {
+        console.warn("Direct students query restricted, will fallback to backend API:", stErr);
+      }
 
       // Load active registered teachers belonging strictly to the current admin/institute
       try {
@@ -219,9 +227,6 @@ export default function App() {
           const createdByEmail = (data.createdByAdminEmail || "").trim().toLowerCase();
           const teacherInstituteId = (data.instituteId || data.createdByAdminUid || "").trim();
           
-          // Strict multi-tenant isolation:
-          // A teacher must belong explicitly to the logged-in administrator.
-          // Never allow unowned or foreign teachers to bleed into other accounts or new accounts.
           const isOwnedByCurrentAdmin = 
             (teacherInstituteId && currentUid && teacherInstituteId === currentUid) ||
             (createdByEmail && currentUserEmail && createdByEmail === currentUserEmail);
@@ -243,7 +248,7 @@ export default function App() {
         });
         setTeachers(teacherRecords);
       } catch (teacherErr) {
-        console.error("Error loading teachers:", teacherErr);
+        console.warn("Notice: Teachers list restricted in client Firestore:", teacherErr);
       }
 
       // Live synchronization of incoming transfer requests where from_institute_id == uid
@@ -268,14 +273,48 @@ export default function App() {
             } as TransferRequest);
           });
           setTransferRequests(reqs);
+        }, (reqErr) => {
+          console.warn("Transfer requests listener notice:", reqErr.message);
         });
       } catch (err) {
-        console.error("Error listening to transfer requests:", err);
+        console.warn("Error listening to transfer requests:", err);
       }
 
-    } catch (err) {
-      console.error("Firestore DB read/load error:", err);
-      handleFirestoreError(err, OperationType.GET, `users/${uid}`);
+    } catch (err: any) {
+      console.warn("Direct Firestore read restricted or unavailable, falling back to authenticated backend API:", err?.message);
+      // Fallback: Fetch directly from secure authenticated backend API (bypassing client rule limits)
+      try {
+        const [settingsRes, studentsRes, batchesRes, attendanceRes, feesRes, noticesRes, logsRes] = await Promise.all([
+          authFetch("/api/institute/settings").then(r => r.ok ? r.json() : null).catch(() => null),
+          authFetch("/api/students").then(r => r.ok ? r.json() : []).catch(() => []),
+          authFetch("/api/batches").then(r => r.ok ? r.json() : []).catch(() => []),
+          authFetch("/api/attendance").then(r => r.ok ? r.json() : []).catch(() => []),
+          authFetch("/api/fees/installments").then(r => r.ok ? r.json() : []).catch(() => []),
+          authFetch("/api/notices").then(r => r.ok ? r.json() : []).catch(() => []),
+          authFetch("/api/logs").then(r => r.ok ? r.json() : []).catch(() => [])
+        ]);
+
+        if (settingsRes) {
+          setSettings({
+            name: settingsRes.name || "ClasSetu Premium Coaching",
+            logo: settingsRes.logo || "🎓",
+            address: settingsRes.address || "",
+            contact: settingsRes.contact || ""
+          });
+          setAdminUser({
+            email: auth.currentUser?.email || "",
+            name: (settingsRes.name || "Admin").split(" ")[0]
+          });
+        }
+        if (Array.isArray(studentsRes) && studentsRes.length > 0) setStudents(studentsRes);
+        if (Array.isArray(batchesRes) && batchesRes.length > 0) setBatches(batchesRes);
+        if (Array.isArray(attendanceRes) && attendanceRes.length > 0) setAttendance(attendanceRes);
+        if (Array.isArray(feesRes) && feesRes.length > 0) setInstallments(feesRes);
+        if (Array.isArray(noticesRes) && noticesRes.length > 0) setNotices(noticesRes);
+        if (Array.isArray(logsRes) && logsRes.length > 0) setLogs(logsRes);
+      } catch (apiErr) {
+        console.warn("Backend API fallback completed with partial data:", apiErr);
+      }
     }
   };
 
@@ -329,7 +368,7 @@ export default function App() {
             setInstituteData(null);
           }
         }, (error) => {
-          console.error("Error listening to institute status:", error);
+          console.warn("Institute status listener notice (handled gracefully):", error.message);
         });
 
       } else {
@@ -800,7 +839,7 @@ export default function App() {
 
       // Seamlessly trigger backend API route to process background loops and template dispatches
       try {
-        await fetch("/api/attendance/mark", {
+        await authFetch("/api/attendance/mark", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -860,30 +899,6 @@ export default function App() {
       setInstallments([...currentInstallments]);
 
       await updateDoc(docRef, { installments: currentInstallments });
-
-      // Automatically send Meta WhatsApp Fee Receipt
-      const studentObj = students.find((s) => s.id === inst.studentId);
-      if (studentObj && (studentObj.parentMobile || studentObj.alternateMobile)) {
-        const mobile = studentObj.parentMobile || studentObj.alternateMobile;
-        const receiptNo = `REC-${inst.id.substring(0, 8).toUpperCase()}`;
-        try {
-          await fetch("/api/fees/send-whatsapp", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              recipientPhone: mobile,
-              studentName: studentObj.name,
-              parentName: studentObj.parentName || studentObj.name,
-              amount: payAmount,
-              type: "receipt",
-              instituteName: settings.name || "Alpha Coaching",
-              receiptNo
-            })
-          });
-        } catch (e) {
-          console.error("Auto WhatsApp receipt send error:", e);
-        }
-      }
     } catch (err) {
       console.error("Failed to log fee payment in Firestore:", err);
       handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
@@ -910,34 +925,9 @@ export default function App() {
       if (!student || !installment) return;
 
       const reminderId = `LOG-${Math.floor(1000 + Math.random() * 9000)}`;
-      const triggerMsg = `Fee Reminder Update: Hello ${student.parentName}, your child ${student.name} has tuition fees pending of ₹${installment.amount - (installment.paidAmount || 0)} (Due Date: ${installment.dueDate}) for Plan Type: ${(student.feesPlan || "").toUpperCase()}. Kindly click to settle. - ${settings.name || "Alpha Coaching"}`;
+      const triggerMsg = `Fee Reminder Update: Hello ${student.parentName}, your child ${student.name} has tuition fees pending of ₹${installment.amount - (installment.paidAmount || 0)} (Due Date: ${installment.dueDate}) for Plan Type: ${(student.feesPlan || "").toUpperCase()}. Kindly settle at the desk. - ${settings.name || "Alpha Coaching"}`;
 
-      let logStatus = "Sent";
-      if (student.parentMobile) {
-        try {
-          const res = await fetch("/api/fees/send-whatsapp", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              recipientPhone: student.parentMobile,
-              studentName: student.name,
-              parentName: student.parentName || student.name,
-              amount: installment.amount - (installment.paidAmount || 0),
-              dueDate: installment.dueDate,
-              type: "reminder",
-              instituteName: settings.name || "Alpha Coaching"
-            })
-          }).then((r) => r.json());
-
-          if (res && res.success) {
-            logStatus = "Delivered (Meta WhatsApp)";
-          } else {
-            logStatus = `Sent (${res?.error || "Pending"})`;
-          }
-        } catch (e) {
-          logStatus = "Sent";
-        }
-      }
+      const logStatus = "Logged";
 
       currentLogs.push({
         id: reminderId,
@@ -994,33 +984,8 @@ export default function App() {
 
       for (const student of targetStudents) {
         const mobile = student.parentMobile || student.alternateMobile || "";
-        let logStatus = "Sent";
-        let logText = `NOTICE (${newNotice.title}): ${newNotice.body}`;
-
-        if (selectedMedium === "WhatsApp" && mobile) {
-          try {
-            const metaRes = await fetch("/api/whatsapp/test-send", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                recipientPhone: mobile,
-                type: "template",
-                templateName: "hello_world",
-                languageCode: "en_US",
-                textMessage: `${newNotice.title}: ${newNotice.body}`
-              })
-            }).then((r) => r.json());
-
-            if (metaRes.success) {
-              logStatus = "Delivered (Meta WhatsApp)";
-              logText += ` [wamid: ${metaRes.messageId}]`;
-            } else {
-              logStatus = `Sent (${metaRes.error || "Meta API pending"})`;
-            }
-          } catch (e: any) {
-            logStatus = "Sent";
-          }
-        }
+        const logStatus = "Published";
+        const logText = `NOTICE (${newNotice.title}): ${newNotice.body}`;
 
         currentLogs.push({
           id: `LOG-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -1030,7 +995,7 @@ export default function App() {
           text: logText,
           sentAt: new Date().toISOString(),
           status: logStatus,
-          medium: selectedMedium
+          medium: "SMS"
         });
       }
 
@@ -1041,30 +1006,115 @@ export default function App() {
         notices: currentNotices,
         logs: currentLogs
       });
-
-      // Update communication counts in institutes doc
-      const instRef = doc(db, "institutes", user.uid);
-      const instSnap = await getDoc(instRef);
-      if (instSnap.exists() && targetStudents.length > 0) {
-        const instData = instSnap.data();
-        const count = targetStudents.length;
-        if (selectedMedium === "SMS") {
-          const smsSent = Number(instData.smsSent ?? 0) + count;
-          await updateDoc(instRef, {
-            smsSent,
-            smsLeft: 999999
-          });
-        } else {
-          const whatsappSent = Number(instData.whatsappSent ?? 0) + count;
-          await updateDoc(instRef, {
-            whatsappSent,
-            whatsappLeft: 999999
-          });
-        }
-      }
     } catch (err) {
       console.error("Failed to post notice in Firestore:", err);
       handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+    }
+  };
+
+  // Dedicated Absent Student WhatsApp notification
+  const handleSendAbsentWhatsApp = async (studentId: string, customText?: string) => {
+    if (isSubscribed === false) {
+      setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.");
+      return { success: false, error: "Subscription Expired" };
+    }
+    const student = students.find((s) => s.id === studentId);
+    if (!student || !student.parentMobile) {
+      return { success: false, error: "Parent mobile not found for this student" };
+    }
+
+    const batch = batches.find((b) => b.id === student.batchId);
+    const todayDate = new Date().toISOString().split("T")[0];
+
+    try {
+      const res = await authFetch("/api/absent/send-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: student.id,
+          studentName: student.name,
+          parentName: student.parentName || student.name,
+          parentMobile: student.parentMobile,
+          date: todayDate,
+          batchName: batch?.name || "General",
+          customMessage: customText,
+          instituteName: settings.name || "Alpha Coaching"
+        })
+      });
+      const data = await res.json();
+      if (data.log) {
+        setLogs((prev) => [data.log, ...prev]);
+        const user = auth.currentUser;
+        if (user) {
+          try {
+            const docRef = doc(db, "users", user.uid);
+            await updateDoc(docRef, { logs: [data.log, ...logs] });
+          } catch (e) {
+            console.error("Failed to sync log to Firestore:", e);
+          }
+        }
+      }
+      return data;
+    } catch (err: any) {
+      console.error("Failed to dispatch absent WhatsApp:", err);
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Bulk Absent Students WhatsApp notification
+  const handleSendAllAbsentWhatsApp = async (date: string, batchId?: string, customText?: string) => {
+    if (isSubscribed === false) {
+      setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.");
+      return { success: false, error: "Subscription Expired" };
+    }
+    const absentRecords = attendance.filter((a) => a.date === date && a.status === "Absent");
+    let targetStudents = students.filter((s) => absentRecords.some((a) => a.studentId === s.id));
+    if (batchId) {
+      targetStudents = targetStudents.filter((s) => s.batchId === batchId);
+    }
+    if (targetStudents.length === 0) {
+      return { success: false, error: "No absent students found for the selected criteria" };
+    }
+
+    const payload = targetStudents.map((s) => {
+      const batch = batches.find((b) => b.id === s.batchId);
+      return {
+        studentId: s.id,
+        studentName: s.name,
+        parentName: s.parentName || s.name,
+        parentMobile: s.parentMobile,
+        date,
+        batchName: batch?.name || "General",
+        customMessage: customText
+      };
+    });
+
+    try {
+      const res = await authFetch("/api/absent/bulk-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          records: payload,
+          instituteName: settings.name || "Alpha Coaching"
+        })
+      });
+      const data = await res.json();
+      if (data.logs && Array.isArray(data.logs)) {
+        setLogs((prev) => [...data.logs, ...prev]);
+        const user = auth.currentUser;
+        if (user) {
+          try {
+            const docRef = doc(db, "users", user.uid);
+            await updateDoc(docRef, { logs: [...data.logs, ...logs] });
+          } catch (e) {
+            console.error("Failed to sync bulk logs to Firestore:", e);
+          }
+        }
+      }
+      return data;
+    } catch (err: any) {
+      console.error("Failed to dispatch bulk absent WhatsApp:", err);
+      return { success: false, error: err.message };
     }
   };
 
@@ -1171,9 +1221,9 @@ export default function App() {
     },
     { 
       id: "whatsapp", 
-      line1: "WhatsApp Desk", 
-      line2: "Broadcasting manual templates", 
-      line3: "Review automation delivery logs", 
+      line1: "Absentee WhatsApp", 
+      line2: "Notify absent students' parents", 
+      line3: "1-Click WhatsApp & automated alerts", 
       icon: "💬" 
     },
     { 
@@ -1470,12 +1520,17 @@ export default function App() {
            {activeTab === "whatsapp" && (
              <WhatsAppCenterView 
                students={students} 
+               batches={batches}
+               attendance={attendance}
                notices={notices} 
                logs={logs}
-               onSendNotice={handleSendNotice}
-                isSubscribed={isSubscribed}
-                onSubscriptionBlocked={() => setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.")}
-                instituteData={instituteData}
+               settings={settings}
+               onMarkAttendance={handleMarkAttendance}
+               onSendAbsentWhatsApp={handleSendAbsentWhatsApp}
+               onSendAllAbsentWhatsApp={handleSendAllAbsentWhatsApp}
+               isSubscribed={isSubscribed}
+               onSubscriptionBlocked={() => setSubscriptionAlert("Subscription Expired. Please renew to add or modify data.")}
+               instituteData={instituteData}
              />
            )}
 
